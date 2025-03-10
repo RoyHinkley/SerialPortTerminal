@@ -88,6 +88,8 @@ namespace SerialPortTerminal
             catch { dataFileName = programName + ".txt"; }
             dataLog = new LogFile(dataFileName);
             this.Text = PortConfiguration.PortName + " : " + dataFileName;
+            
+            PortConfiguration.portName.SelectedIndex = 0;
 
             updateThread = new Thread(updateUI);
             updateThread.IsBackground = true;
@@ -108,7 +110,7 @@ namespace SerialPortTerminal
             SerialDevice = new SerialDevice(PortConfiguration.PortSettings.Clone());
             if (LogCheckBox.Checked)
                 SerialDevice.Log = Log;
-            SerialDevice.ResponseReceived = ProcessResponse;
+            SerialDevice.ResponseReceivedHandler = ProcessResponse;
 
             int i;
             if (int.TryParse(bytePaceTextBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out i))
@@ -118,8 +120,9 @@ namespace SerialPortTerminal
                 SerialDevice.MillisecondsBetweenMessages = i;
 
             SerialDevice.CrcConfig = GetCrcOptions();
+            SerialDevice.IgnoreCRCErrors = IgnoreCRCErrorsCheckBox.Checked;
 
-            SerialDevice.Initialize();
+            SerialDevice.Connect();
             this.Text = SerialDevice.PortSettings.PortName + " : " + dataFileName;
         }
 
@@ -235,7 +238,7 @@ namespace SerialPortTerminal
                 if (LogEverything)
                 {
                     Log.Record("send text: " + s);
-                    Log.Record("send bytes: " + Utility.byte_string(s));
+                    Log.Record("send bytes: " + s.ToByteString());
                 }
                 NotReadyLabel.Visible = !SerialDevice.Command(s);
                 if (!NotReadyLabel.Visible) CommandCount++;
@@ -282,7 +285,7 @@ namespace SerialPortTerminal
             return crc.Update(s).ToString("X4");
         }
 
-        private void CRCButton_Click(object sender, EventArgs e)
+        private void CrcButton_Click(object sender, EventArgs e)
         {
             if (CrcOptionsGroupBox.Visible)
             {
@@ -356,7 +359,7 @@ namespace SerialPortTerminal
             lock (ResponseQ) ResponseQ.Enqueue(s);
             if (LogEverything)
             {
-                Log.Record("receive bytes: " + Utility.byte_string(s));
+                Log.Record("receive bytes: " + s.ToByteString());
                 Log.Record("receive text: " + s);
             }
             updateSignal.Set();
@@ -400,7 +403,7 @@ namespace SerialPortTerminal
 
         void UpdateReceivedTextBox()
         {
-            ReceivedTextBox.AppendText(bytesCheckBox.Checked ? Utility.byte_string(response) : response);
+            ReceivedTextBox.AppendText(bytesCheckBox.Checked ? response.ToByteString() : response);
             rxCrcValue.Text = crcAsText(response);
         }
 
@@ -486,9 +489,283 @@ namespace SerialPortTerminal
 
         private void bytesCheckBox_CheckedChanged(object sender, EventArgs e)
         {
-            ReceivedTextBox.Text = bytesCheckBox.Checked ? Utility.byte_string(responseBuffer.ToString()) : responseBuffer.ToString();
+            ReceivedTextBox.Text = bytesCheckBox.Checked ? responseBuffer.ToString().ToByteString() : stringifyResponse();
             ReceivedTextBox.Select(ReceivedTextBox.SelectionStart, 0); //Is this what I want to do?
                                                                        //UpdateReceivedTextBox();
+        }
+
+        private string stringifyResponse()
+        {
+            StringBuilder sb = new StringBuilder();
+            foreach (byte b in responseBuffer.ToString())
+                sb.Append(ASCII[b]);
+            return sb.ToString();
+        }
+
+        string[] ASCII =
+        {
+            "«NUL»",
+            "«SOH»",
+            "«STX»",
+            "«ETX»",
+            "«EOT»",
+            "«ENQ»",
+            "«ACK»",
+            "«BEL»",
+            "«BS»",
+            "«HT»",
+            "«LF»",
+            "«VT»",
+            "«FF»",
+            "«CR»",
+            "«SO»",
+            "«SI»",
+            "«DLE»",
+            "«DC1»",
+            "«DC2»",
+            "«DC3»",
+            "«DC4»",
+            "«NAK»",
+            "«SYN»",
+            "«ETB»",
+            "«CAN»",
+            "«EM»",
+            "«SUB»",
+            "«ESC»",
+            "«FS»",
+            "«GS»",
+            "«RS»",
+            "«US»",
+            " ",
+            "!",
+            "\"",
+            "#",
+            "$",
+            "%",
+            "&",
+            "'",
+            "(",
+            ")",
+            "*",
+            "+",
+            ",",
+            "-",
+            ".",
+            "/",
+            "0",
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9",
+            ":",
+            ";",
+            "<",
+            "=",
+            ">",
+            "?",
+            "@",
+            "A",
+            "B",
+            "C",
+            "D",
+            "E",
+            "F",
+            "G",
+            "H",
+            "I",
+            "J",
+            "K",
+            "L",
+            "M",
+            "N",
+            "O",
+            "P",
+            "Q",
+            "R",
+            "S",
+            "T",
+            "U",
+            "V",
+            "W",
+            "X",
+            "Y",
+            "Z",
+            "[",
+            "\\",
+            "]",
+            "^",
+            "_",
+            "`",
+            "a",
+            "b",
+            "c",
+            "d",
+            "e",
+            "f",
+            "g",
+            "h",
+            "i",
+            "j",
+            "k",
+            "l",
+            "m",
+            "n",
+            "o",
+            "p",
+            "q",
+            "r",
+            "s",
+            "t",
+            "u",
+            "v",
+            "w",
+            "x",
+            "y",
+            "z",
+            "{",
+            "|",
+            "}",
+            "~",
+            "«DEL»",
+            "«80»",
+            "«81»",
+            "«82»",
+            "«83»",
+            "«84»",
+            "«85»",
+            "«86»",
+            "«87»",
+            "«88»",
+            "«89»",
+            "«8A»",
+            "«8B»",
+            "«8C»",
+            "«8D»",
+            "«8E»",
+            "«8F»",
+            "«90»",
+            "«91»",
+            "«92»",
+            "«93»",
+            "«94»",
+            "«95»",
+            "«96»",
+            "«97»",
+            "«98»",
+            "«99»",
+            "«9A»",
+            "«9B»",
+            "«9C»",
+            "«9D»",
+            "«9E»",
+            "«9F»",
+            "«A0»",
+            "«A1»",
+            "«A2»",
+            "«A3»",
+            "«A4»",
+            "«A5»",
+            "«A6»",
+            "«A7»",
+            "«A8»",
+            "«A9»",
+            "«AA»",
+            "«AB»",
+            "«AC»",
+            "«AD»",
+            "«AE»",
+            "«AF»",
+            "«B0»",
+            "«B1»",
+            "«B2»",
+            "«B3»",
+            "«B4»",
+            "«B5»",
+            "«B6»",
+            "«B7»",
+            "«B8»",
+            "«B9»",
+            "«BA»",
+            "«BB»",
+            "«BC»",
+            "«BD»",
+            "«BE»",
+            "«BF»",
+            "«C0»",
+            "«C1»",
+            "«C2»",
+            "«C3»",
+            "«C4»",
+            "«C5»",
+            "«C6»",
+            "«C7»",
+            "«C8»",
+            "«C9»",
+            "«CA»",
+            "«CB»",
+            "«CC»",
+            "«CD»",
+            "«CE»",
+            "«CF»",
+            "«D0»",
+            "«D1»",
+            "«D2»",
+            "«D3»",
+            "«D4»",
+            "«D5»",
+            "«D6»",
+            "«D7»",
+            "«D8»",
+            "«D9»",
+            "«DA»",
+            "«DB»",
+            "«DC»",
+            "«DD»",
+            "«DE»",
+            "«DF»",
+            "«E0»",
+            "«E1»",
+            "«E2»",
+            "«E3»",
+            "«E4»",
+            "«E5»",
+            "«E6»",
+            "«E7»",
+            "«E8»",
+            "«E9»",
+            "«EA»",
+            "«EB»",
+            "«EC»",
+            "«ED»",
+            "«EE»",
+            "«EF»",
+            "«F0»",
+            "«F1»",
+            "«F2»",
+            "«F3»",
+            "«F4»",
+            "«F5»",
+            "«F6»",
+            "«F7»",
+            "«F8»",
+            "«F9»",
+            "«FA»",
+            "«FB»",
+            "«FC»",
+            "«FD»",
+            "«FE»",
+            "«FF»"
+        };
+
+        private void IgnoreCRCErrorsCheckBox_CheckedChanged(object sender, EventArgs e)
+        {
+            if (SerialDevice != null)
+                SerialDevice.IgnoreCRCErrors = IgnoreCRCErrorsCheckBox.Checked;
         }
 
         private void OmitTermCharCheckBox_CheckedChanged(object sender, EventArgs e)

@@ -1,5 +1,3 @@
 .vs/
-Serial Port Terminal/bin/
-Serial Port Terminal/obj/
-/bin/Release
-/obj/Release
+/bin
+/obj
