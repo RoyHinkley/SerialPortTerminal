@@ -1,0 +1,12 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="SerialPortTerminal.MainWindow"
+        Title="Serial Port Terminal"
+        Width="1000"
+        Height="700">
+  <Grid>
+    <TextBlock HorizontalAlignment="Center"
+               VerticalAlignment="Center"
+               Text="Serial Port Terminal" />
+  </Grid>
+</Window>
