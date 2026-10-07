@@ -39,11 +39,12 @@ The UI distinguishes the **conversation** from evidence of **how the conversatio
 - Always show received traffic, including unsolicited/datalogging reports.
 - Display choices never alter authoritative received data.
 - Received display modes: raw text, escaped text, bytes; more may come later.
+- CRC acceptance and CRC presentation are separate concerns. A diagnostic user may choose to receive/display a message whose CRC failed, and independently choose whether the Received presentation includes the normally stripped CRC bytes.
 - Normally follow the latest received entry, but do not yank the view downward after the user deliberately scrolls up.
 
 ### Authoritative received data
 
-Move away from `Action<string>` as the authoritative receive boundary. Retain original bytes unchanged with useful metadata.
+Move away from `Action<string>` as the authoritative receive boundary. Retain original bytes unchanged with useful metadata. In particular, preserve CRC bytes and CRC-validation outcome even when the ordinary presentation strips the CRC bytes or rejects a failed message.
 
 ```text
 physical serial reads/chunks
@@ -102,13 +103,15 @@ Keep these concerns distinct:
 
 1. Application preferences — log folder/prefix/retention, UI behavior.
 2. Serial connection — port, baud, parity, data bits, stop bits, handshake, RTS.
-3. Protocol — CRC, framing/termination, pacing, receive-silence behavior, CRC-error policy.
-4. Received display — raw/escaped/bytes and future filters.
+3. Protocol — CRC, framing/termination, pacing, receive-silence behavior, CRC-error acceptance policy.
+4. Received display — raw/escaped/bytes, whether to show CRC bytes, and future filters.
 5. Diagnostic detail/presentation — distinct from Received display and from whether the automatic log exists.
 
 Named device profiles may eventually retain complete connection + protocol setups for frequently encountered instruments, but do not build profiles yet.
 
 The permanent left configuration panel is provisional. A flyout/drawer is favored once configuration behavior matures so the main workspace remains focused on Communications and Transport Diagnostics.
+
+Customized/technical UI terms need discoverable explanations, probably tooltips and/or a small information icon rather than expanding every label. In particular, do not assume users know that `MS`/`MSB` means **most significant**. Explain bit order and byte order explicitly. Apply the same pattern to other specialized terms as they appear.
 
 ## CRC and framing: critical legacy requirement
 
@@ -121,6 +124,10 @@ Field hardware must support the unfortunate form:
 where the termination character participates in CRC calculation. Do not simplify this to `<message><crc>[<termchar>]`.
 
 CRC may be calculated incrementally as bytes arrive, and the termination-byte value can occur in payload or CRC bytes. Term-character detection and CRC validation are therefore necessarily entangled: a candidate terminator may need subsequent CRC bytes before it can be accepted; a failed candidate must allow parsing to continue.
+
+CRC-error acceptance is protocol/application policy. Ordinary AeonHacs applications should normally reject/ignore messages whose CRC fails, but SPT needs a diagnostic option to forward/display them for inspection. This is independent of whether the Received presentation includes the CRC bytes themselves.
+
+Do not assume that “no term char” and “silence framed” are intrinsically the same protocol choice. They are related in the current implementation, but a useful future mode may use a term character for validation while also using receive silence as a framing/boundary condition. Preserve this as an open design question until the receive behavior is characterized.
 
 Do not casually rewrite `ProcessRx`. Characterize with synthetic tests covering ordinary terminated messages, embedded termination bytes, valid `<message><termchar><crc>`, false candidates, CRC failure, multiple messages per chunk, arbitrary chunk splits, and silence boundaries.
 
@@ -181,25 +188,28 @@ Implemented:
 
 Important limitations/deferred work:
 
-- received data still crosses the main boundary as `string`; authoritative byte records pending;
+- received data still crosses the main boundary as `string`; authoritative byte records pending, which currently prevents Received from independently showing normally stripped CRC bytes;
 - legacy `<message><termchar><crc>` behavior not yet characterized/proven;
+- current UI couples “no term char” to silence framing; whether those should be independently selectable remains open;
 - UI diagnostic/Received views need scalable append/bounded-tail behavior;
 - settings exist but do not yet have a settings UI; log filename rename remains deferred;
 - protocol controls are only the initial CRC subset; pacing/silence and other practical controls remain;
 - serial signal monitoring/control absent;
 - `RTS_CONTROL_TOGGLE` absent;
-- some controls need live propagation.
+- some controls need live propagation;
+- specialized protocol labels need tooltips/information affordances.
 
 ## Near-term priority
 
-1. Make the tool practically useful for current instrument troubleshooting: complete the necessary protocol controls and verify byte/CRC diagnostics.
-2. Introduce authoritative byte-oriented received records without casually changing framing semantics.
-3. Render Communications from retained bytes with correct framed-vs-streaming grouping and follow-tail behavior.
-4. Characterize/fix CRC/termination behavior with tests before substantial parser cleanup.
+1. Introduce authoritative byte-oriented received records carrying original bytes plus CRC validity/metadata, so CRC acceptance and CRC-byte display can be independent.
+2. Render Communications from retained bytes, including a Received-side Show CRC bytes option and correct framed-vs-streaming grouping/follow-tail behavior.
+3. Characterize/fix CRC/termination behavior with tests before substantial parser cleanup, including the possible independence of silence framing and term-character validation.
+4. Complete other protocol controls needed for current instrument troubleshooting.
 5. Replace O(N^2) text accumulation with scalable bounded UI tails.
-6. Add serial signal diagnostics/control and later `RTS_CONTROL_TOGGLE`.
-7. Add settings UI/log rename when it provides practical value; do not let configuration polish block core diagnostic functionality.
-8. Return to broader UI polish after the diagnostic path is solid.
+6. Add concise tooltips/information affordances for specialized terms such as most-significant bit/byte ordering.
+7. Add serial signal diagnostics/control and later `RTS_CONTROL_TOGGLE`.
+8. Add settings UI/log rename when it provides practical value; do not let configuration polish block core diagnostic functionality.
+9. Return to broader UI polish after the diagnostic path is solid.
 
 ## Development practice
 
