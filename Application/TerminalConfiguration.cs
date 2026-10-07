@@ -11,8 +11,10 @@ namespace SerialPortTerminal.Application;
 public enum ReceivedDataFormat
 {
     Text,
-    EscapedText,
-    Bytes
+    Bytes,
+    // Retained only so configurations written by development builds containing this value still load.
+    [Obsolete("Text now always escapes non-printable bytes.")]
+    EscapedText
 }
 
 public sealed class ConfigurationChangedEventArgs(string propertyName, object? oldValue, object? newValue) : EventArgs
@@ -52,7 +54,8 @@ public sealed class TerminalConfiguration : INotifyPropertyChanged
     private bool crcMsByteFirst;
     private bool omitTermChar;
     private bool deliverCrcErrors;
-    private bool includeDetailedTransportEvents = true;
+    private bool includeDetailedTransportEvents;
+    private bool logSignals;
     private ReceivedDataFormat receivedDataFormat;
     private bool showCrcBytes;
     private bool diagnosticWordWrap;
@@ -86,6 +89,7 @@ public sealed class TerminalConfiguration : INotifyPropertyChanged
     public bool DeliverCrcErrors { get => deliverCrcErrors; set => Set(ref deliverCrcErrors, value); }
 
     public bool IncludeDetailedTransportEvents { get => includeDetailedTransportEvents; set => Set(ref includeDetailedTransportEvents, value); }
+    public bool LogSignals { get => logSignals; set => Set(ref logSignals, value); }
     public ReceivedDataFormat ReceivedDataFormat { get => receivedDataFormat; set => Set(ref receivedDataFormat, value); }
     public bool ShowCrcBytes { get => showCrcBytes; set => Set(ref showCrcBytes, value); }
     public bool DiagnosticWordWrap { get => diagnosticWordWrap; set => Set(ref diagnosticWordWrap, value); }
@@ -97,11 +101,12 @@ public sealed class TerminalConfiguration : INotifyPropertyChanged
     {
         try
         {
-            if (!File.Exists(LastConfigurationPath))
-                return new TerminalConfiguration();
-
-            return JsonSerializer.Deserialize<TerminalConfiguration>(File.ReadAllText(LastConfigurationPath), JsonOptions)
-                ?? new TerminalConfiguration();
+            if (!File.Exists(LastConfigurationPath)) return new TerminalConfiguration();
+            var loaded = JsonSerializer.Deserialize<TerminalConfiguration>(File.ReadAllText(LastConfigurationPath), JsonOptions) ?? new TerminalConfiguration();
+#pragma warning disable CS0618
+            if (loaded.ReceivedDataFormat == ReceivedDataFormat.EscapedText) loaded.receivedDataFormat = ReceivedDataFormat.Text;
+#pragma warning restore CS0618
+            return loaded;
         }
         catch
         {
@@ -111,101 +116,58 @@ public sealed class TerminalConfiguration : INotifyPropertyChanged
         }
     }
 
-    public void Save(string path) =>
-        File.WriteAllText(path, JsonSerializer.Serialize(this, JsonOptions));
-
+    public void Save(string path) => File.WriteAllText(path, JsonSerializer.Serialize(this, JsonOptions));
     public void SaveLast() => Save(LastConfigurationPath);
 
     public string Describe()
     {
         var connection = $"{PortName ?? "(no port)"} {BaudRate} {DataBits}{ParityAbbreviation(Parity)}{StopBitsAbbreviation(StopBits)}, handshake={Handshake}, RTS={RtsMode}";
-        if (!UseCrc)
-            return connection + ", CRC=off";
-
-        return connection +
-            $", CRC=on poly={CrcPolynomial} initial={CrcInitialValue} residue={CrcExpectedResidue}" +
+        if (!UseCrc) return connection + ", CRC=off";
+        return connection + $", CRC=on poly={CrcPolynomial} initial={CrcInitialValue} residue={CrcExpectedResidue}" +
             $" term={TermChar} postInvert={CrcPostInvert} msBitFirst={CrcMsBitFirst} msByteFirst={CrcMsByteFirst}" +
             $" omitTermChar={OmitTermChar} deliverCrcErrors={DeliverCrcErrors}";
     }
 
     public SerialPortSettings CreatePortSettings()
     {
-        if (string.IsNullOrWhiteSpace(PortName))
-            throw new InvalidOperationException("No serial port is selected.");
+        if (string.IsNullOrWhiteSpace(PortName)) throw new InvalidOperationException("No serial port is selected.");
         return new SerialPortSettings(PortName, BaudRate, Parity, DataBits, StopBits, Handshake);
     }
 
     public bool TryCreateCrcOptions(out CrcOptions? options, out string? error)
     {
-        options = null;
-        error = null;
-        if (!UseCrc)
-            return true;
-
+        options = null; error = null;
+        if (!UseCrc) return true;
         if (!TryHex16(CrcPolynomial, "CRC polynomial", out var polynomial, out error) ||
             !TryHex16(CrcInitialValue, "CRC initial value", out var initial, out error) ||
             !TryHex16(CrcExpectedResidue, "CRC expected residue", out var residue, out error) ||
-            !TryHex8(TermChar, "termination character", out var term, out error))
-            return false;
-
-        options = new CrcOptions(initial, polynomial, residue, CrcPostInvert,
-            CrcMsBitFirst, CrcMsByteFirst, term, OmitTermChar);
+            !TryHex8(TermChar, "termination character", out var term, out error)) return false;
+        options = new CrcOptions(initial, polynomial, residue, CrcPostInvert, CrcMsBitFirst, CrcMsByteFirst, term, OmitTermChar);
         return true;
     }
 
-    private static string ParityAbbreviation(Parity value) => value switch
-    {
-        Parity.None => "N",
-        Parity.Odd => "O",
-        Parity.Even => "E",
-        Parity.Mark => "M",
-        Parity.Space => "S",
-        _ => value.ToString()
-    };
-
-    private static string StopBitsAbbreviation(StopBits value) => value switch
-    {
-        StopBits.One => "1",
-        StopBits.OnePointFive => "1.5",
-        StopBits.Two => "2",
-        _ => value.ToString()
-    };
+    private static string ParityAbbreviation(Parity value) => value switch { Parity.None => "N", Parity.Odd => "O", Parity.Even => "E", Parity.Mark => "M", Parity.Space => "S", _ => value.ToString() };
+    private static string StopBitsAbbreviation(StopBits value) => value switch { StopBits.One => "1", StopBits.OnePointFive => "1.5", StopBits.Two => "2", _ => value.ToString() };
 
     private static bool TryHex16(string text, string name, out ushort value, out string? error)
     {
-        if (ushort.TryParse(NormalizeHex(text), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out value))
-        {
-            error = null;
-            return true;
-        }
-        error = $"Invalid {name}: '{text}'. Enter 1-4 hexadecimal digits.";
-        return false;
+        if (ushort.TryParse(NormalizeHex(text), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out value)) { error = null; return true; }
+        error = $"Invalid {name}: '{text}'. Enter 1-4 hexadecimal digits."; return false;
     }
-
     private static bool TryHex8(string text, string name, out byte value, out string? error)
     {
-        if (byte.TryParse(NormalizeHex(text), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out value))
-        {
-            error = null;
-            return true;
-        }
-        error = $"Invalid {name}: '{text}'. Enter 1-2 hexadecimal digits.";
-        return false;
+        if (byte.TryParse(NormalizeHex(text), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out value)) { error = null; return true; }
+        error = $"Invalid {name}: '{text}'. Enter 1-2 hexadecimal digits."; return false;
     }
-
     private static string NormalizeHex(string? text)
     {
         var value = text?.Trim() ?? string.Empty;
         return value.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? value[2..] : value;
     }
-
     private void Set<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
     {
-        if (EqualityComparer<T>.Default.Equals(field, value))
-            return;
-
-        var oldValue = field;
-        field = value;
+        if (EqualityComparer<T>.Default.Equals(field, value)) return;
+        var oldValue = field; field = value;
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
         Changed?.Invoke(this, new ConfigurationChangedEventArgs(propertyName!, oldValue, value));
     }
