@@ -6,18 +6,14 @@
         MinWidth="900" MinHeight="600">
   <Grid RowDefinitions="*,Auto" Margin="16" RowSpacing="12">
     <Grid ColumnDefinitions="270,*" ColumnSpacing="14">
-
-      <!-- Configuration is intentionally a side panel: the transcript is the primary workspace. -->
       <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto">
         <StackPanel Spacing="12">
           <Border Padding="12" BorderThickness="1" CornerRadius="4">
             <StackPanel Spacing="10">
               <Grid ColumnDefinitions="*,Auto">
                 <TextBlock Text="Connection" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
-                <TextBlock x:Name="ConnectionStatus" Grid.Column="1" Text="Disconnected"
-                           VerticalAlignment="Center" Opacity="0.75" />
+                <TextBlock x:Name="ConnectionStatus" Grid.Column="1" Text="Disconnected" VerticalAlignment="Center" Opacity="0.75" />
               </Grid>
-
               <Grid ColumnDefinitions="82,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="8">
                 <TextBlock Grid.Row="0" Text="Port" VerticalAlignment="Center" />
                 <Grid Grid.Row="0" Grid.Column="1" ColumnDefinitions="*,Auto" ColumnSpacing="6">
@@ -37,68 +33,88 @@
                 <TextBlock Grid.Row="6" Text="RTS" VerticalAlignment="Center" />
                 <ComboBox x:Name="RtsBox" Grid.Row="6" Grid.Column="1" />
               </Grid>
-
               <Button x:Name="ConnectButton" Content="Connect" Click="Connect_Click" HorizontalAlignment="Stretch" />
             </StackPanel>
           </Border>
 
           <Border Padding="12" BorderThickness="1" CornerRadius="4">
             <StackPanel Spacing="8">
-              <TextBlock Text="Display &amp; logging" FontSize="16" FontWeight="SemiBold" />
+              <TextBlock Text="Received display" FontSize="16" FontWeight="SemiBold" />
               <CheckBox x:Name="BinaryBox" Content="Show data as bytes" />
               <CheckBox x:Name="EscapeBox" Content="Escape text" />
-              <CheckBox x:Name="VerboseBox" Content="Detailed diagnostics" IsChecked="True" />
+            </StackPanel>
+          </Border>
+
+          <Border Padding="12" BorderThickness="1" CornerRadius="4">
+            <StackPanel Spacing="8">
+              <TextBlock Text="Diagnostic logging" FontSize="16" FontWeight="SemiBold" />
+              <CheckBox x:Name="VerboseBox" Content="Detailed transport diagnostics" IsChecked="True" />
+              <TextBlock Text="Session-file logging will be added here." TextWrapping="Wrap" Opacity="0.65" />
             </StackPanel>
           </Border>
 
           <Border Padding="12" BorderThickness="1" CornerRadius="4">
             <StackPanel Spacing="6">
               <TextBlock Text="Protocol" FontSize="16" FontWeight="SemiBold" />
-              <TextBlock Text="CRC, framing, termination, pacing, and receive-silence controls will live here."
-                         TextWrapping="Wrap" Opacity="0.65" />
+              <TextBlock Text="CRC, framing, termination, pacing, and receive-silence controls will live here." TextWrapping="Wrap" Opacity="0.65" />
             </StackPanel>
           </Border>
 
           <Border Padding="12" BorderThickness="1" CornerRadius="4">
             <StackPanel Spacing="6">
               <TextBlock Text="Signals" FontSize="16" FontWeight="SemiBold" />
-              <TextBlock Text="RTS / CTS / DTR / DSR / DCD / RI monitoring and control will live here."
-                         TextWrapping="Wrap" Opacity="0.65" />
+              <TextBlock Text="RTS / CTS / DTR / DSR / DCD / RI monitoring and control will live here." TextWrapping="Wrap" Opacity="0.65" />
             </StackPanel>
           </Border>
         </StackPanel>
       </ScrollViewer>
 
-      <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto" RowSpacing="10">
-        <Grid ColumnDefinitions="*,Auto">
-          <StackPanel>
-            <TextBlock Text="Communications" FontSize="18" FontWeight="SemiBold" />
-            <TextBlock Text="Commands, responses, and transport diagnostics" Opacity="0.65" />
-          </StackPanel>
-          <Button x:Name="ClearButton" Grid.Column="1" Content="Clear transcript"
-                  VerticalAlignment="Center" Click="Clear_Click" />
-        </Grid>
+      <TabControl Grid.Column="1">
+        <TabItem Header="Communications">
+          <Grid Margin="10" RowDefinitions="Auto,*" RowSpacing="12">
+            <Border Padding="10" BorderThickness="1" CornerRadius="4">
+              <Grid RowDefinitions="Auto,Auto" RowSpacing="6">
+                <TextBlock Text="Send" FontWeight="SemiBold" />
+                <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                  <TextBox x:Name="CommandBox" Watermark="Enter command" KeyDown="CommandBox_KeyDown" />
+                  <Button x:Name="SendButton" Grid.Column="1" Content="Send" Click="Send_Click" MinWidth="92" />
+                </Grid>
+              </Grid>
+            </Border>
 
-        <TextBox x:Name="TranscriptBox" Grid.Row="1"
-                 IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap"
-                 FontFamily="Consolas, Cascadia Mono, monospace"
-                 ScrollViewer.VerticalScrollBarVisibility="Auto"
-                 ScrollViewer.HorizontalScrollBarVisibility="Auto" />
-
-        <Border Grid.Row="2" Padding="10" BorderThickness="1" CornerRadius="4">
-          <Grid RowDefinitions="Auto,Auto" RowSpacing="6">
-            <TextBlock Text="Command" FontWeight="SemiBold" />
-            <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="8">
-              <TextBox x:Name="CommandBox" Watermark="Enter command" KeyDown="CommandBox_KeyDown" />
-              <Button x:Name="SendButton" Grid.Column="1" Content="Send" Click="Send_Click" MinWidth="92" />
+            <Grid Grid.Row="1" RowDefinitions="Auto,*" RowSpacing="6">
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Text="Received" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <Button Grid.Column="1" Content="Clear" Click="ClearReceived_Click" />
+              </Grid>
+              <TextBox x:Name="ReceivedBox" Grid.Row="1"
+                       IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
+                       FontFamily="Consolas, Cascadia Mono, monospace"
+                       ScrollViewer.VerticalScrollBarVisibility="Auto"
+                       ScrollViewer.HorizontalScrollBarVisibility="Disabled" />
             </Grid>
           </Grid>
-        </Border>
-      </Grid>
+        </TabItem>
+
+        <TabItem Header="Transport Diagnostics">
+          <Grid Margin="10" RowDefinitions="Auto,*" RowSpacing="6">
+            <Grid ColumnDefinitions="*,Auto">
+              <StackPanel>
+                <TextBlock Text="Transport Diagnostics" FontSize="16" FontWeight="SemiBold" />
+                <TextBlock Text="Detailed record of how serial traffic was transported and processed" Opacity="0.65" />
+              </StackPanel>
+              <Button Grid.Column="1" Content="Clear" Click="ClearDiagnostics_Click" VerticalAlignment="Center" />
+            </Grid>
+            <TextBox x:Name="DiagnosticsBox" Grid.Row="1"
+                     IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap"
+                     FontFamily="Consolas, Cascadia Mono, monospace"
+                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                     ScrollViewer.HorizontalScrollBarVisibility="Auto" />
+          </Grid>
+        </TabItem>
+      </TabControl>
     </Grid>
 
-    <TextBlock Grid.Row="1"
-               Text="Enter sends the command. Configuration is locked while connected."
-               Opacity="0.6" />
+    <TextBlock Grid.Row="1" Text="Enter sends. Up/Down recalls sent commands. Connection configuration is locked while connected." Opacity="0.6" />
   </Grid>
 </Window>
