@@ -26,7 +26,7 @@ public sealed class TerminalConfiguration : INotifyPropertyChanged
     private StopBits stopBits = StopBits.One;
     private Handshake handshake = Handshake.None;
     private SerialDevice.RtsModes rtsMode = SerialDevice.RtsModes.Enabled;
-    private bool useCrc;
+    private bool useCrc = true;
     private string crcPolynomial = "DAAE";
     private string crcInitialValue = "FFFF";
     private string crcExpectedResidue = "82C0";
