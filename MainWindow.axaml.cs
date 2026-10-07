@@ -11,9 +11,11 @@ namespace SerialPortTerminal;
 
 public sealed partial class MainWindow : Window
 {
+    private readonly AppSettings settings = AppSettings.Load();
     private readonly DiagnosticLog log = new();
     private readonly TerminalSession session = new();
     private readonly List<string> commandHistory = [];
+    private readonly DateTime sessionStarted = DateTime.Now;
     private int commandHistoryIndex;
 
     public MainWindow()
@@ -41,6 +43,7 @@ public sealed partial class MainWindow : Window
 
         RefreshPorts();
         UpdateConnectionState(false);
+        UpdateLogFileDisplay();
         Closed += MainWindow_Closed;
     }
 
@@ -83,6 +86,8 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        EnsureSessionLog();
+
         session.SerialDevice?.Dispose();
         session.SerialDevice = new SerialDevice(new SerialPortSettings(
             portName,
@@ -99,8 +104,46 @@ public sealed partial class MainWindow : Window
         session.LogResponses = true;
 
         if (!session.Connect())
-            AppendDiagnostic($"Unable to connect to {portName}.");
+            log.Record($"Unable to connect to {portName}.");
         UpdateConnectionState(session.Ready);
+    }
+
+    private void EnsureSessionLog()
+    {
+        if (log.FileName is not null)
+            return;
+
+        var directory = settings.ResolvedLogFolder;
+        Directory.CreateDirectory(directory);
+        var fileName = $"{settings.LogFilePrefix}{sessionStarted:yyyy-MM-dd_HHmmss}.log";
+        log.FileName = Path.Combine(directory, fileName);
+        ApplyLogRetention(directory);
+        UpdateLogFileDisplay();
+        log.Record($"Diagnostic session started. Log: {log.FileName}");
+    }
+
+    private void ApplyLogRetention(string directory)
+    {
+        var current = log.FileName;
+        var pattern = settings.LogFilePrefix + "*.log";
+        var automaticLogs = Directory.EnumerateFiles(directory, pattern, SearchOption.TopDirectoryOnly)
+            .Where(path => !string.Equals(Path.GetFullPath(path), current, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(Path.GetFileName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var oldLogs = automaticLogs.Skip(Math.Max(0, settings.LogFilesToKeep - 1));
+        foreach (var oldLog in oldLogs)
+        {
+            try { File.Delete(oldLog); }
+            catch { /* Retention failure is non-fatal and must not prevent communications. */ }
+        }
+    }
+
+    private void UpdateLogFileDisplay()
+    {
+        if (LogFileBox is null)
+            return;
+        LogFileBox.Text = log.FileName is null ? "(starts on first connection attempt)" : Path.GetFileName(log.FileName);
     }
 
     private void Send_Click(object? sender, RoutedEventArgs e) => SendCommand();
@@ -166,7 +209,7 @@ public sealed partial class MainWindow : Window
     private void ClearDiagnostics_Click(object? sender, RoutedEventArgs e) => DiagnosticsBox.Clear();
 
     private void AppendReceived(string entry) => AppendText(ReceivedBox, entry, separateEntry: true);
-    private void AppendDiagnostic(string entry) => AppendText(DiagnosticsBox, entry, separateEntry: true);
+    private void AppendDiagnostic(string entry) => AppendText(DiagnosticsBox, entry, separateEntry: false);
 
     private static void AppendText(TextBox box, string entry, bool separateEntry)
     {
