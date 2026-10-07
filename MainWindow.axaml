@@ -17,21 +17,21 @@
               <Grid ColumnDefinitions="82,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="8">
                 <TextBlock Grid.Row="0" Text="Port" VerticalAlignment="Center" />
                 <Grid Grid.Row="0" Grid.Column="1" ColumnDefinitions="*,Auto" ColumnSpacing="6">
-                  <ComboBox x:Name="PortBox" />
+                  <ComboBox x:Name="PortBox" SelectedItem="{Binding PortName, Mode=TwoWay}" />
                   <Button x:Name="RefreshPortsButton" Grid.Column="1" Content="↻" Width="34" Click="RefreshPorts_Click" />
                 </Grid>
                 <TextBlock Grid.Row="1" Text="Baud" VerticalAlignment="Center" />
-                <ComboBox x:Name="BaudBox" Grid.Row="1" Grid.Column="1" />
+                <ComboBox x:Name="BaudBox" Grid.Row="1" Grid.Column="1" SelectedItem="{Binding BaudRate, Mode=TwoWay}" />
                 <TextBlock Grid.Row="2" Text="Data bits" VerticalAlignment="Center" />
-                <ComboBox x:Name="DataBitsBox" Grid.Row="2" Grid.Column="1" />
+                <ComboBox x:Name="DataBitsBox" Grid.Row="2" Grid.Column="1" SelectedItem="{Binding DataBits, Mode=TwoWay}" />
                 <TextBlock Grid.Row="3" Text="Parity" VerticalAlignment="Center" />
-                <ComboBox x:Name="ParityBox" Grid.Row="3" Grid.Column="1" />
+                <ComboBox x:Name="ParityBox" Grid.Row="3" Grid.Column="1" SelectedItem="{Binding Parity, Mode=TwoWay}" />
                 <TextBlock Grid.Row="4" Text="Stop bits" VerticalAlignment="Center" />
-                <ComboBox x:Name="StopBitsBox" Grid.Row="4" Grid.Column="1" />
+                <ComboBox x:Name="StopBitsBox" Grid.Row="4" Grid.Column="1" SelectedItem="{Binding StopBits, Mode=TwoWay}" />
                 <TextBlock Grid.Row="5" Text="Handshake" VerticalAlignment="Center" />
-                <ComboBox x:Name="HandshakeBox" Grid.Row="5" Grid.Column="1" />
+                <ComboBox x:Name="HandshakeBox" Grid.Row="5" Grid.Column="1" SelectedItem="{Binding Handshake, Mode=TwoWay}" />
                 <TextBlock Grid.Row="6" Text="RTS" VerticalAlignment="Center" />
-                <ComboBox x:Name="RtsBox" Grid.Row="6" Grid.Column="1" />
+                <ComboBox x:Name="RtsBox" Grid.Row="6" Grid.Column="1" SelectedItem="{Binding RtsMode, Mode=TwoWay}" />
               </Grid>
               <Button x:Name="ConnectButton" Content="Connect" Click="Connect_Click" HorizontalAlignment="Stretch" />
             </StackPanel>
@@ -40,16 +40,15 @@
           <Border Padding="12" BorderThickness="1" CornerRadius="4">
             <StackPanel Spacing="8">
               <TextBlock Text="Received display" FontSize="16" FontWeight="SemiBold" />
-              <CheckBox x:Name="BinaryBox" Content="Show data as bytes" />
-              <CheckBox x:Name="EscapeBox" Content="Escape text" />
-              <CheckBox x:Name="ShowCrcBytesBox" Content="Show CRC bytes" />
+              <ComboBox x:Name="ReceivedFormatBox" SelectedItem="{Binding ReceivedDataFormat, Mode=TwoWay}" />
+              <CheckBox Content="Show CRC bytes" IsChecked="{Binding ShowCrcBytes, Mode=TwoWay}" />
             </StackPanel>
           </Border>
 
           <Border Padding="12" BorderThickness="1" CornerRadius="4">
             <StackPanel Spacing="8">
               <TextBlock Text="Diagnostic logging" FontSize="16" FontWeight="SemiBold" />
-              <CheckBox x:Name="VerboseBox" Content="Include detailed transport events" IsChecked="True" />
+              <CheckBox Content="Include detailed transport events" IsChecked="{Binding IncludeDetailedTransportEvents, Mode=TwoWay}" />
               <TextBlock Text="The automatic session log continues even when detailed events are disabled." TextWrapping="Wrap" Opacity="0.65" />
             </StackPanel>
           </Border>
@@ -57,22 +56,22 @@
           <Border Padding="12" BorderThickness="1" CornerRadius="4">
             <StackPanel Spacing="8">
               <TextBlock Text="Protocol" FontSize="16" FontWeight="SemiBold" />
-              <CheckBox x:Name="CrcBox" Content="Use CRC" />
+              <CheckBox x:Name="CrcBox" Content="Use CRC" IsChecked="{Binding UseCrc, Mode=TwoWay}" />
               <Grid ColumnDefinitions="92,*" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="6">
                 <TextBlock Text="Polynomial" VerticalAlignment="Center" />
-                <TextBox x:Name="CrcPolynomialBox" Grid.Column="1" Text="DAAE" />
+                <TextBox x:Name="CrcPolynomialBox" Grid.Column="1" Text="{Binding CrcPolynomial, Mode=TwoWay}" />
                 <TextBlock Grid.Row="1" Text="Initial" VerticalAlignment="Center" />
-                <TextBox x:Name="CrcInitialBox" Grid.Row="1" Grid.Column="1" Text="FFFF" />
+                <TextBox x:Name="CrcInitialBox" Grid.Row="1" Grid.Column="1" Text="{Binding CrcInitialValue, Mode=TwoWay}" />
                 <TextBlock Grid.Row="2" Text="Residue" VerticalAlignment="Center" />
-                <TextBox x:Name="CrcResidueBox" Grid.Row="2" Grid.Column="1" Text="82C0" />
+                <TextBox x:Name="CrcResidueBox" Grid.Row="2" Grid.Column="1" Text="{Binding CrcExpectedResidue, Mode=TwoWay}" />
                 <TextBlock Grid.Row="3" Text="Term char" VerticalAlignment="Center" />
-                <TextBox x:Name="TermCharBox" Grid.Row="3" Grid.Column="1" Text="03" />
+                <TextBox x:Name="TermCharBox" Grid.Row="3" Grid.Column="1" Text="{Binding TermChar, Mode=TwoWay}" />
               </Grid>
-              <CheckBox x:Name="CrcPostInvertBox" Content="Post-invert CRC" IsChecked="True" />
-              <CheckBox x:Name="CrcMsBitFirstBox" Content="MS bit first" />
-              <CheckBox x:Name="CrcMsByteFirstBox" Content="MS byte first" />
-              <CheckBox x:Name="OmitTermCharBox" Content="No term character (silence framed)" />
-              <CheckBox x:Name="IgnoreCrcErrorsBox" Content="Deliver messages with CRC errors" />
+              <CheckBox x:Name="CrcPostInvertBox" Content="Post-invert CRC" IsChecked="{Binding CrcPostInvert, Mode=TwoWay}" />
+              <CheckBox x:Name="CrcMsBitFirstBox" Content="MS bit first" IsChecked="{Binding CrcMsBitFirst, Mode=TwoWay}" />
+              <CheckBox x:Name="CrcMsByteFirstBox" Content="MS byte first" IsChecked="{Binding CrcMsByteFirst, Mode=TwoWay}" />
+              <CheckBox x:Name="OmitTermCharBox" Content="No term character (silence framed)" IsChecked="{Binding OmitTermChar, Mode=TwoWay}" />
+              <CheckBox x:Name="IgnoreCrcErrorsBox" Content="Deliver messages with CRC errors" IsChecked="{Binding DeliverCrcErrors, Mode=TwoWay}" />
             </StackPanel>
           </Border>
 
@@ -119,8 +118,8 @@
                 <TextBlock Text="Transport Diagnostics" FontSize="16" FontWeight="SemiBold" />
                 <TextBlock Text="Detailed record of how serial traffic was transported and processed" Opacity="0.65" />
               </StackPanel>
-              <CheckBox x:Name="DiagnosticWrapBox" Grid.Column="1" Content="Word wrap" VerticalAlignment="Center"
-                        IsChecked="False" Checked="DiagnosticWrapBox_Changed" Unchecked="DiagnosticWrapBox_Changed" />
+              <CheckBox Grid.Column="1" Content="Word wrap" VerticalAlignment="Center"
+                        IsChecked="{Binding DiagnosticWordWrap, Mode=TwoWay}" />
               <Button Grid.Column="2" Content="Clear" Click="ClearDiagnostics_Click" VerticalAlignment="Center" />
             </Grid>
             <Grid Grid.Row="1" ColumnDefinitions="Auto,*" ColumnSpacing="8">
