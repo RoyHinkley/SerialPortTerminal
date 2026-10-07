@@ -2,11 +2,58 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="SerialPortTerminal.MainWindow"
         Title="Serial Port Terminal"
-        Width="1000"
-        Height="700">
-  <Grid>
-    <TextBlock HorizontalAlignment="Center"
-               VerticalAlignment="Center"
-               Text="Serial Port Terminal" />
+        Width="1100" Height="760"
+        MinWidth="820" MinHeight="560">
+  <Grid RowDefinitions="Auto,*,Auto" Margin="16" RowSpacing="12">
+    <Border Grid.Row="0" Padding="12" BorderThickness="1" CornerRadius="4">
+      <Grid RowDefinitions="Auto,Auto" RowSpacing="10">
+        <Grid ColumnDefinitions="Auto,120,Auto,110,Auto,110,Auto,110,*,Auto,Auto"
+              ColumnSpacing="8">
+          <TextBlock Grid.Column="0" Text="Port" VerticalAlignment="Center" />
+          <ComboBox x:Name="PortBox" Grid.Column="1" />
+          <TextBlock Grid.Column="2" Text="Baud" VerticalAlignment="Center" />
+          <ComboBox x:Name="BaudBox" Grid.Column="3" />
+          <TextBlock Grid.Column="4" Text="Parity" VerticalAlignment="Center" />
+          <ComboBox x:Name="ParityBox" Grid.Column="5" />
+          <TextBlock Grid.Column="6" Text="Data bits" VerticalAlignment="Center" />
+          <ComboBox x:Name="DataBitsBox" Grid.Column="7" />
+          <Button x:Name="RefreshPortsButton" Grid.Column="9" Content="Refresh" Click="RefreshPorts_Click" />
+          <Button x:Name="ConnectButton" Grid.Column="10" Content="Connect" Click="Connect_Click" MinWidth="92" />
+        </Grid>
+
+        <Grid Grid.Row="1" ColumnDefinitions="Auto,110,Auto,110,Auto,110,Auto,Auto,Auto,*"
+              ColumnSpacing="8">
+          <TextBlock Grid.Column="0" Text="Stop bits" VerticalAlignment="Center" />
+          <ComboBox x:Name="StopBitsBox" Grid.Column="1" />
+          <TextBlock Grid.Column="2" Text="Handshake" VerticalAlignment="Center" />
+          <ComboBox x:Name="HandshakeBox" Grid.Column="3" />
+          <TextBlock Grid.Column="4" Text="RTS" VerticalAlignment="Center" />
+          <ComboBox x:Name="RtsBox" Grid.Column="5" />
+          <CheckBox x:Name="BinaryBox" Grid.Column="6" Content="Binary display" VerticalAlignment="Center" />
+          <CheckBox x:Name="EscapeBox" Grid.Column="7" Content="Escape text" VerticalAlignment="Center" />
+          <CheckBox x:Name="VerboseBox" Grid.Column="8" Content="Detailed diagnostics" VerticalAlignment="Center" IsChecked="True" />
+          <TextBlock x:Name="ConnectionStatus" Grid.Column="9" Text="Disconnected"
+                     HorizontalAlignment="Right" VerticalAlignment="Center" />
+        </Grid>
+      </Grid>
+    </Border>
+
+    <Grid Grid.Row="1" RowDefinitions="Auto,*,Auto" RowSpacing="8">
+      <Grid ColumnDefinitions="Auto,*">
+        <TextBlock Text="Communications / diagnostics" FontWeight="SemiBold" />
+        <Button Grid.Column="1" x:Name="ClearButton" Content="Clear" HorizontalAlignment="Right" Click="Clear_Click" />
+      </Grid>
+      <TextBox x:Name="TranscriptBox" Grid.Row="1"
+               IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap"
+               FontFamily="Consolas, Cascadia Mono, monospace"
+               VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" />
+      <Grid Grid.Row="2" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+        <TextBox x:Name="CommandBox" Watermark="Command" KeyDown="CommandBox_KeyDown" />
+        <Button x:Name="SendButton" Grid.Column="1" Content="Send" Click="Send_Click" MinWidth="92" />
+      </Grid>
+    </Grid>
+
+    <TextBlock Grid.Row="2" Text="Enter sends the command. CRC/framing controls and modem-signal monitoring will be added next."
+               Opacity="0.65" />
   </Grid>
 </Window>
