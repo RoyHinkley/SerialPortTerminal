@@ -12,7 +12,6 @@ public enum ReceivedDataFormat
 {
     Text,
     Bytes,
-    // Retained only so configurations written by development builds containing this value still load.
     [Obsolete("Text now always escapes non-printable bytes.")]
     EscapedText
 }
@@ -24,19 +23,10 @@ public sealed class ConfigurationChangedEventArgs(string propertyName, object? o
     public object? NewValue { get; } = newValue;
 }
 
-/// <summary>
-/// Owns the live terminal configuration. The UI binds to this object; serial sessions, logging,
-/// and persistence consume the same state rather than interrogating controls.
-/// </summary>
 public sealed class TerminalConfiguration : INotifyPropertyChanged
 {
     private const string LastConfigurationFileName = "SerialPortTerminal.configuration.json";
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        WriteIndented = true,
-        Converters = { new JsonStringEnumConverter() }
-    };
-
+    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true, Converters = { new JsonStringEnumConverter() } };
     private string? portName;
     private int baudRate = 115200;
     private Parity parity = Parity.None;
@@ -53,7 +43,7 @@ public sealed class TerminalConfiguration : INotifyPropertyChanged
     private bool crcMsBitFirst;
     private bool crcMsByteFirst;
     private bool omitTermChar;
-    private bool deliverCrcErrors;
+    private bool suppressCrcErrors;
     private bool includeDetailedTransportEvents;
     private bool logSignals;
     private ReceivedDataFormat receivedDataFormat;
@@ -61,12 +51,6 @@ public sealed class TerminalConfiguration : INotifyPropertyChanged
     private bool diagnosticWordWrap;
 
     public event PropertyChangedEventHandler? PropertyChanged;
-
-    /// <summary>
-    /// Reports semantic configuration changes, including old and new values, for diagnostics and
-    /// other non-UI consumers. This is intentionally separate from INotifyPropertyChanged, whose
-    /// contract does not retain the previous value.
-    /// </summary>
     public event EventHandler<ConfigurationChangedEventArgs>? Changed;
 
     public string? PortName { get => portName; set => Set(ref portName, value); }
@@ -76,7 +60,6 @@ public sealed class TerminalConfiguration : INotifyPropertyChanged
     public StopBits StopBits { get => stopBits; set => Set(ref stopBits, value); }
     public Handshake Handshake { get => handshake; set => Set(ref handshake, value); }
     public SerialDevice.RtsModes RtsMode { get => rtsMode; set => Set(ref rtsMode, value); }
-
     public bool UseCrc { get => useCrc; set => Set(ref useCrc, value); }
     public string CrcPolynomial { get => crcPolynomial; set => Set(ref crcPolynomial, value); }
     public string CrcInitialValue { get => crcInitialValue; set => Set(ref crcInitialValue, value); }
@@ -86,16 +69,14 @@ public sealed class TerminalConfiguration : INotifyPropertyChanged
     public bool CrcMsBitFirst { get => crcMsBitFirst; set => Set(ref crcMsBitFirst, value); }
     public bool CrcMsByteFirst { get => crcMsByteFirst; set => Set(ref crcMsByteFirst, value); }
     public bool OmitTermChar { get => omitTermChar; set => Set(ref omitTermChar, value); }
-    public bool DeliverCrcErrors { get => deliverCrcErrors; set => Set(ref deliverCrcErrors, value); }
-
+    public bool SuppressCrcErrors { get => suppressCrcErrors; set => Set(ref suppressCrcErrors, value); }
     public bool IncludeDetailedTransportEvents { get => includeDetailedTransportEvents; set => Set(ref includeDetailedTransportEvents, value); }
     public bool LogSignals { get => logSignals; set => Set(ref logSignals, value); }
     public ReceivedDataFormat ReceivedDataFormat { get => receivedDataFormat; set => Set(ref receivedDataFormat, value); }
     public bool ShowCrcBytes { get => showCrcBytes; set => Set(ref showCrcBytes, value); }
     public bool DiagnosticWordWrap { get => diagnosticWordWrap; set => Set(ref diagnosticWordWrap, value); }
 
-    [JsonIgnore]
-    public static string LastConfigurationPath => Path.Combine(AppContext.BaseDirectory, LastConfigurationFileName);
+    [JsonIgnore] public static string LastConfigurationPath => Path.Combine(AppContext.BaseDirectory, LastConfigurationFileName);
 
     public static TerminalConfiguration LoadLast()
     {
@@ -108,12 +89,7 @@ public sealed class TerminalConfiguration : INotifyPropertyChanged
 #pragma warning restore CS0618
             return loaded;
         }
-        catch
-        {
-            // A diagnostic tool must remain usable even if its previous configuration is damaged
-            // or was written by an incompatible development build.
-            return new TerminalConfiguration();
-        }
+        catch { return new TerminalConfiguration(); }
     }
 
     public void Save(string path) => File.WriteAllText(path, JsonSerializer.Serialize(this, JsonOptions));
@@ -125,7 +101,7 @@ public sealed class TerminalConfiguration : INotifyPropertyChanged
         if (!UseCrc) return connection + ", CRC=off";
         return connection + $", CRC=on poly={CrcPolynomial} initial={CrcInitialValue} residue={CrcExpectedResidue}" +
             $" term={TermChar} postInvert={CrcPostInvert} msBitFirst={CrcMsBitFirst} msByteFirst={CrcMsByteFirst}" +
-            $" omitTermChar={OmitTermChar} deliverCrcErrors={DeliverCrcErrors}";
+            $" omitTermChar={OmitTermChar} suppressCrcErrors={SuppressCrcErrors}";
     }
 
     public SerialPortSettings CreatePortSettings()
@@ -138,37 +114,14 @@ public sealed class TerminalConfiguration : INotifyPropertyChanged
     {
         options = null; error = null;
         if (!UseCrc) return true;
-        if (!TryHex16(CrcPolynomial, "CRC polynomial", out var polynomial, out error) ||
-            !TryHex16(CrcInitialValue, "CRC initial value", out var initial, out error) ||
-            !TryHex16(CrcExpectedResidue, "CRC expected residue", out var residue, out error) ||
-            !TryHex8(TermChar, "termination character", out var term, out error)) return false;
-        options = new CrcOptions(initial, polynomial, residue, CrcPostInvert, CrcMsBitFirst, CrcMsByteFirst, term, OmitTermChar);
-        return true;
+        if (!TryHex16(CrcPolynomial, "CRC polynomial", out var polynomial, out error) || !TryHex16(CrcInitialValue, "CRC initial value", out var initial, out error) || !TryHex16(CrcExpectedResidue, "CRC expected residue", out var residue, out error) || !TryHex8(TermChar, "termination character", out var term, out error)) return false;
+        options = new CrcOptions(initial, polynomial, residue, CrcPostInvert, CrcMsBitFirst, CrcMsByteFirst, term, OmitTermChar); return true;
     }
 
     private static string ParityAbbreviation(Parity value) => value switch { Parity.None => "N", Parity.Odd => "O", Parity.Even => "E", Parity.Mark => "M", Parity.Space => "S", _ => value.ToString() };
     private static string StopBitsAbbreviation(StopBits value) => value switch { StopBits.One => "1", StopBits.OnePointFive => "1.5", StopBits.Two => "2", _ => value.ToString() };
-
-    private static bool TryHex16(string text, string name, out ushort value, out string? error)
-    {
-        if (ushort.TryParse(NormalizeHex(text), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out value)) { error = null; return true; }
-        error = $"Invalid {name}: '{text}'. Enter 1-4 hexadecimal digits."; return false;
-    }
-    private static bool TryHex8(string text, string name, out byte value, out string? error)
-    {
-        if (byte.TryParse(NormalizeHex(text), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out value)) { error = null; return true; }
-        error = $"Invalid {name}: '{text}'. Enter 1-2 hexadecimal digits."; return false;
-    }
-    private static string NormalizeHex(string? text)
-    {
-        var value = text?.Trim() ?? string.Empty;
-        return value.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? value[2..] : value;
-    }
-    private void Set<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
-    {
-        if (EqualityComparer<T>.Default.Equals(field, value)) return;
-        var oldValue = field; field = value;
-        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
-        Changed?.Invoke(this, new ConfigurationChangedEventArgs(propertyName!, oldValue, value));
-    }
+    private static bool TryHex16(string text, string name, out ushort value, out string? error) { if (ushort.TryParse(NormalizeHex(text), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out value)) { error = null; return true; } error = $"Invalid {name}: '{text}'. Enter 1-4 hexadecimal digits."; return false; }
+    private static bool TryHex8(string text, string name, out byte value, out string? error) { if (byte.TryParse(NormalizeHex(text), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out value)) { error = null; return true; } error = $"Invalid {name}: '{text}'. Enter 1-2 hexadecimal digits."; return false; }
+    private static string NormalizeHex(string? text) { var value = text?.Trim() ?? string.Empty; return value.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? value[2..] : value; }
+    private void Set<T>(ref T field, T value, [CallerMemberName] string? propertyName = null) { if (EqualityComparer<T>.Default.Equals(field, value)) return; var oldValue = field; field = value; PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName)); Changed?.Invoke(this, new ConfigurationChangedEventArgs(propertyName!, oldValue, value)); }
 }
