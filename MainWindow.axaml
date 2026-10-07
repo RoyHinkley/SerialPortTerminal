@@ -49,7 +49,7 @@
             <StackPanel Spacing="8">
               <TextBlock Text="Diagnostic logging" FontSize="16" FontWeight="SemiBold" />
               <CheckBox x:Name="VerboseBox" Content="Detailed transport diagnostics" IsChecked="True" />
-              <TextBlock Text="Session-file logging will be added here." TextWrapping="Wrap" Opacity="0.65" />
+              <TextBlock Text="Automatic session log starts on the first connection attempt." TextWrapping="Wrap" Opacity="0.65" />
             </StackPanel>
           </Border>
 
@@ -97,7 +97,7 @@
         </TabItem>
 
         <TabItem Header="Transport Diagnostics">
-          <Grid Margin="10" RowDefinitions="Auto,*" RowSpacing="6">
+          <Grid Margin="10" RowDefinitions="Auto,Auto,*" RowSpacing="6">
             <Grid ColumnDefinitions="*,Auto">
               <StackPanel>
                 <TextBlock Text="Transport Diagnostics" FontSize="16" FontWeight="SemiBold" />
@@ -105,7 +105,11 @@
               </StackPanel>
               <Button Grid.Column="1" Content="Clear" Click="ClearDiagnostics_Click" VerticalAlignment="Center" />
             </Grid>
-            <TextBox x:Name="DiagnosticsBox" Grid.Row="1"
+            <Grid Grid.Row="1" ColumnDefinitions="Auto,*" ColumnSpacing="8">
+              <TextBlock Text="Log" VerticalAlignment="Center" />
+              <TextBox x:Name="LogFileBox" Grid.Column="1" IsReadOnly="True" />
+            </Grid>
+            <TextBox x:Name="DiagnosticsBox" Grid.Row="2"
                      IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap"
                      FontFamily="Consolas, Cascadia Mono, monospace"
                      ScrollViewer.VerticalScrollBarVisibility="Auto"
