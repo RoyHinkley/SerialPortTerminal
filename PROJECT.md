@@ -1,14 +1,14 @@
 # SerialPortTerminal project notes
 
-> Temporary live project document. Keep this current while the modernization is still fluid. Once the design and implementation have matured enough for normal GitHub issues/documentation to carry the remaining work, delete this file.
+> Temporary live coordination document. Capture unresolved decisions and deferred ideas so they are not lost accidentally. Items may be removed deliberately when we decide not to pursue them. Delete this file once mature documentation and GitHub issues can carry the remaining work.
 
 ## Purpose
 
-SerialPortTerminal is both an interactive serial diagnostic/investigation tool and a proving ground for the lower-level serial communications machinery used by applications.
+SerialPortTerminal is both an interactive serial diagnostic/investigation tool and a proving ground for lower-level serial communications machinery used by applications.
 
-The reusable serial layer must therefore preserve evidence that an ordinary application might hide: exact transmitted and received bytes, CRC bytes and failures, framing behavior, timing, connection/disconnection events, pin changes, buffer problems, and related counters. Diagnostic capability is a product feature, not merely development tracing.
+The reusable serial layer must preserve evidence an ordinary application might hide: exact TX/RX bytes, CRC bytes and failures, framing behavior, timing, connection/disconnection events, pin changes, buffer problems, counters, and related diagnostics. Diagnostic capability is product functionality, not merely developer tracing.
 
-The immediate practical motivation is troubleshooting a Eurotherm controller. The previous SerialPortTerminal lacked binary byte logging and CRC-byte visibility that exist in newer AeonHacs code.
+The immediate practical motivation is troubleshooting a Eurotherm controller. The previous SPT lacked binary byte logging and CRC-byte visibility present in newer AeonHacs code.
 
 ## Architecture direction
 
@@ -24,32 +24,26 @@ SerialDevice
         +--> reusable by eventual applications/controllers
 ```
 
-Selected current AeonHacs serial machinery is being adapted rather than importing AeonHacs.Core as a dependency. SerialPortTerminal should remain self-contained. Do not import broad Hacs lifecycle/state/global infrastructure or the old catch-all `Utility` class.
+Adapt selected current AeonHacs serial machinery rather than depending on AeonHacs.Core. Do not import broad Hacs lifecycle/state/global infrastructure or the old catch-all `Utility` class.
 
-Migration principle: preserve field-proven receive/framing algorithms until they are understood and characterized by tests. Modernize their surroundings first. Functional changes to delicate protocol logic should be explicit rather than incidental cleanup.
+Preserve field-proven receive/framing algorithms until understood and characterized by tests. Modernize their surroundings first. Functional changes to delicate protocol logic should be explicit rather than incidental cleanup.
 
 ## Communications model
 
-The UI should distinguish the **conversation** from the detailed evidence of **how the conversation was transported**.
+The UI distinguishes the **conversation** from evidence of **how the conversation was transported**.
 
-### Sent / Received
+### Send / Received
 
-The Communications workspace is the operator's record of the conversation.
-
-- Label the two directions **Send** and **Received**, rather than assuming every received message is a response to a command.
-- Send belongs above Received.
-- Enter in the Send control sends the current command.
-- Maintain command history and allow previous commands to be recalled.
-- Always show received messages, including unsolicited traffic and datalogging reports.
-- Display choices affect presentation only; they must never alter the authoritative received data.
-- Received display modes currently envisioned: raw text, escaped text, and bytes. More presentation/filter modes may be added later.
-- The latest received entry should normally remain visible by automatic scrolling. If the user deliberately scrolls upward to inspect history, new traffic should not forcibly pull the view back to the bottom.
+- Use **Send** and **Received** rather than assuming every received message answers a command.
+- Send is above Received; Enter sends; Up/Down recalls command history.
+- Always show received traffic, including unsolicited/datalogging reports.
+- Display choices never alter authoritative received data.
+- Received display modes: raw text, escaped text, bytes; more may come later.
+- Normally follow the latest received entry, but do not yank the view downward after the user deliberately scrolls up.
 
 ### Authoritative received data
 
-Move away from `Action<string>` as the authoritative receive boundary. Received data should retain the original bytes unchanged, accompanied by useful metadata.
-
-A future receive model should distinguish:
+Move away from `Action<string>` as the authoritative receive boundary. Retain original bytes unchanged with useful metadata.
 
 ```text
 physical serial reads/chunks
@@ -61,44 +55,38 @@ received data/frame records
 logical Received messages / presentation grouping
 ```
 
-A `ReceivedMessage` should mean a logical message we actually believe is complete. If lower-level records may represent only fragments, use a name such as `ReceivedData` or `ReceivedFrame` rather than calling every OS read a message.
+Reserve `ReceivedMessage` for a logical message believed complete. Use `ReceivedData`/`ReceivedFrame` for fragments if appropriate.
 
-For clearly framed traffic, each recognized message begins a new Received display entry even when its payload contains no CR/LF. UI entry separation is independent of payload whitespace. If a message itself contains CR/LF or blank lines, preserve those bytes/whitespace; do not consume them merely because the UI also separates entries.
+For clearly framed traffic, every recognized logical message begins a new Received display entry even without CR/LF. UI separation is independent of payload whitespace; preserve CR/LF and blank lines actually present in the payload.
 
-For unframed/streaming traffic where distinct messages cannot be discriminated, serial/OS read boundaries must **not** become display-message boundaries. Multiple receive chunks should be presented as one continuing/wrapping Received entry until a genuine higher-level boundary exists (for example disconnect/reset/session boundary or future explicit policy).
+For unframed/streaming traffic, OS/serial read boundaries are **not** message boundaries. Multiple reads belong to one continuing display entry until a genuine higher-level boundary such as disconnect/reset/session boundary or future explicit policy.
 
-This distinction is important for both command/response devices and continuous/datalogging devices.
+## Transport diagnostics and logging
 
-## Transport diagnostics
+Transport Diagnostics explains how traffic transpired: raw TX/RX bytes, chunks, timing, CRC details/errors, connection and pin events, buffer conditions, recovery, etc.
 
-Transport Diagnostics is separate from Communications. It explains how the traffic transpired: raw TX/RX bytes, read chunks, timing, CRC details/errors, connection events, pin events, buffer conditions, recovery, and similar information.
+The **disk log is the authoritative transport-diagnostic record**. The UI is a live view/tail of the same ordered stream, not a separately generated representation.
 
-The UI has a Transport Diagnostics tab so this information can be inspected without opening an external editor. Historically these diagnostics existed only in log files.
+`DiagnosticLog` now uses an ordered producer/consumer: producers timestamp/enqueue quickly; a worker writes to disk and publishes UI entries in order. Shutdown drains pending entries. Logging should not materially perturb the timing being diagnosed.
 
-The **disk log is the authoritative transport-diagnostic record**. The UI view should be a live view/tail of that same ordered diagnostic stream, not an independently generated second version.
+### Baseline vs detailed diagnostics
 
-Logging must not materially perturb the serial timing being diagnosed. The current `DiagnosticLog` performs synchronous file I/O/event delivery and should be changed to an ordered producer/consumer design: serial paths enqueue timestamped records quickly; a background consumer writes/publishes them in order. Disposal must drain pending records. File failures should be isolated and surfaced without recursive logging.
+Automatic session logging is independent of diagnostic detail. The log continues when detailed transport events are disabled. Baseline events such as session/connection state, errors, commands and received messages should remain recorded. The UI checkbox means **Include detailed transport events**, not “enable logging.” `LogEverything` should eventually be replaced or clarified so this distinction is explicit in the model rather than accidental policy.
 
 ### Automatic session logs
 
-Logging should require essentially no operator forethought.
+- Lazily create the log on the first connection attempt; merely opening/closing SPT need not create one.
+- One log spans the application/investigation run, including disconnect/reconnect cycles.
+- Default directory: `Logs` relative to the application directory; configurable relative or absolute path later.
+- Default automatic prefix: `spt-`; configurable later.
+- Lexicographically sortable filename, e.g. `spt-2026-10-06_192735.log`.
+- Default retention: 25 automatic logs; configurable later.
+- Retention applies only to automatic-name matches; never silently delete unrelated/user-renamed files or the current log.
+- Show the active filename in Transport Diagnostics.
+- Future: allow editing the filename to rename the actual backing file, with validation/collision handling. A renamed file naturally falls outside automatic retention; no separate Keep metadata is initially necessary.
+- Possible conveniences later: Open Log / Open Log Folder / export. Automatic capture remains primary.
 
-- Lazily create a diagnostic log when something interesting first happens, initially the first connection attempt. Merely opening and closing the application need not create a log.
-- Use one log for the application/investigation session, spanning disconnect/reconnect cycles. Those transitions are useful evidence.
-- Default log directory: `Logs` relative to the application directory, supporting the portable-application model.
-- Allow the user to configure another relative or absolute log directory.
-- Default automatic filename prefix: `spt-`.
-- Default timestamp format is lexicographically sortable, e.g. `spt-2026-10-06_192735.log`.
-- Make the filename prefix configurable.
-- Default retention: 25 automatically named session logs; make this configurable.
-- Retention should apply only to files matching the configured automatic naming convention. Do not silently delete unrelated/user-renamed files.
-- Never delete the current log.
-- Show the current log filename in the Transport Diagnostics UI.
-- Allow the user to rename the current log. Renaming means renaming the actual backing file, with collision/filename validation.
-- A renamed log naturally becomes a retained/important log because it no longer matches the automatic retention pattern; no separate Keep metadata is required initially.
-- Later conveniences may include Open Log / Open Log Folder / export, but automatic capture is primary.
-
-Initial persistent logging settings:
+Current settings defaults:
 
 ```text
 LogFolder       = "Logs"
@@ -106,147 +94,115 @@ LogFilePrefix   = "spt-"
 LogFilesToKeep  = 25
 ```
 
+Settings are stored portably beside the application rather than under AppData.
+
 ## Configuration direction
 
-Configuration is becoming a real application concept and should not remain hard-coded in the window.
+Keep these concerns distinct:
 
-Separate at least these concerns:
+1. Application preferences — log folder/prefix/retention, UI behavior.
+2. Serial connection — port, baud, parity, data bits, stop bits, handshake, RTS.
+3. Protocol — CRC, framing/termination, pacing, receive-silence behavior, CRC-error policy.
+4. Received display — raw/escaped/bytes and future filters.
+5. Diagnostic detail/presentation — distinct from Received display and from whether the automatic log exists.
 
-1. **Application preferences** — log folder, prefix, retention, UI behavior.
-2. **Serial connection settings** — port, baud, parity, data bits, stop bits, handshake, RTS behavior.
-3. **Protocol settings** — CRC, framing/termination, pacing, receive-silence behavior, CRC-error policy.
-4. **Received display settings** — raw/escaped/byte presentation and future filters.
-5. **Diagnostic logging/presentation settings** — distinct from Received display.
+Named device profiles may eventually retain complete connection + protocol setups for frequently encountered instruments, but do not build profiles yet.
 
-Named device profiles may eventually be useful for connection/protocol settings, but do not build that system yet.
-
-The current permanent left configuration panel is provisional. A left flyout/drawer is favored over consuming permanent workspace once configuration behavior is mature. The main workspace should remain focused on Communications and Transport Diagnostics.
+The permanent left configuration panel is provisional. A flyout/drawer is favored once configuration behavior matures so the main workspace remains focused on Communications and Transport Diagnostics.
 
 ## CRC and framing: critical legacy requirement
 
-There is field hardware/protocol behavior that must support the unfortunate form:
+Field hardware must support the unfortunate form:
 
 ```text
 <message><termchar><crc>
 ```
 
-where the termination character participates in the CRC calculation. This cannot be simplified to the more conventional `<message><crc>[<termchar>]` assumption.
+where the termination character participates in CRC calculation. Do not simplify this to `<message><crc>[<termchar>]`.
 
-CRC may be calculated incrementally as bytes arrive, and the termination byte value can also occur in payload or CRC bytes. Consequently, term-character detection and CRC validation are necessarily entangled: a candidate term character may have to be followed by CRC bytes and validated before it can be accepted as the real message boundary; a failed candidate must allow parsing to continue.
+CRC may be calculated incrementally as bytes arrive, and the termination-byte value can occur in payload or CRC bytes. Term-character detection and CRC validation are therefore necessarily entangled: a candidate terminator may need subsequent CRC bytes before it can be accepted; a failed candidate must allow parsing to continue.
 
-Do not casually rewrite `ProcessRx`. Characterize the required behavior first with synthetic tests, including:
+Do not casually rewrite `ProcessRx`. Characterize with synthetic tests covering ordinary terminated messages, embedded termination bytes, valid `<message><termchar><crc>`, false candidates, CRC failure, multiple messages per chunk, arbitrary chunk splits, and silence boundaries.
 
-- ordinary terminated messages;
-- embedded termination-byte values;
-- valid `<message><termchar><crc>`;
-- false termination candidates;
-- CRC failure;
-- multiple messages in one received chunk;
-- arbitrary chunk splits;
-- silence-based boundaries.
+The current adapted receive implementation has **not yet been proven correct for the legacy termchar-before-CRC case**.
 
-The current adapted receive implementation has **not yet been proven correct for this legacy termchar-before-CRC case**.
+## Receive-path preservation
 
-## Receive-path preservation notes
+Current `SerialDevice` retains the broad AeonHacs strategy: lightweight `DataReceived` signaling, receive-event coalescing until short silence, block reads into a ring buffer, separate parsing worker, and optional silence framing. These came from field use and should not be replaced merely because simpler code looks nicer.
 
-The current SerialDevice retains the broad AeonHacs receive strategy:
-
-- `DataReceived` notification remains lightweight and signals receive work.
-- receive notifications are coalesced until a short silence;
-- data is read in blocks into a ring buffer;
-- parsing occurs on a separate worker thread;
-- silence may itself be the logical boundary for un-terminated protocols.
-
-These behaviors came from field use and should not be replaced with aesthetically simpler code without measurement/tests.
-
-Known area to review: ring-buffer full/empty ambiguity and exact capacity behavior around a 4096-byte read/wrap.
+Review ring-buffer full/empty ambiguity and exact capacity around a 4096-byte read/wrap.
 
 ## Serial signals / RTS
 
-Future diagnostics should expose conventional serial signals because they are useful during hardware troubleshooting:
+Future diagnostics should expose conventional signals:
 
 - inputs/status: CTS, DSR, DCD/CD, RI;
 - timestamp input changes in Transport Diagnostics;
-- outputs: manual RTS and DTR where handshake ownership permits;
-- make handshake ownership explicit in the UI.
+- manual RTS/DTR outputs where handshake ownership permits;
+- make handshake ownership explicit.
 
-RTS modes conceptually include Disabled, Enabled, and Toggle.
+RTS modes conceptually include Disabled, Enabled, Toggle. Continuously asserted RTS is used by some field devices as a parasitic power source and must remain supported.
 
-Ordinary continuously asserted/deasserted RTS is also used by some field devices as a parasitic power source and must remain supported.
-
-`RTS_CONTROL_TOGGLE` is a separate driver-controlled transmit assertion behavior useful for some RS-485 arrangements. It is currently unimplemented in the modern `System.IO.Ports` version and throws `NotSupportedException`. It is deferred, not expendable. Prefer a supported Win32 route if practical; do not restore fragile reflection into private `SerialPort` internals.
+`RTS_CONTROL_TOGGLE` is separate driver-controlled transmit assertion useful for some RS-485 arrangements. It remains unimplemented in the modern `System.IO.Ports` path and is deferred, not expendable. Prefer a supported Win32 route if practical; do not restore reflection into private `SerialPort` internals.
 
 ## UI / implementation principles
 
-Avalonia is the UI framework. Keep serial/application behavior testable without the window.
+Avalonia is the UI framework. Serial/application behavior must remain testable without the window. Preserve functional organization, not the old WinForms pixel geometry; use proper layout rather than magic offsets.
 
-Functional organization matters more than reproducing the old WinForms pixel layout. Use real layout containers, consistent alignment/spacing, and avoid magic pixel fixes.
+The current UI is provisional and functionality takes precedence over polish. Text views still use `TextBox.Text +=`, which becomes O(N^2); replace with an append-friendly/bounded presentation. The disk diagnostic log remains complete even if the UI retains only a bounded live tail.
 
-Current broad UI direction:
+Display/detail controls should apply live where sensible rather than silently taking effect only on the next connection.
 
-```text
-[ configuration / future flyout ] [ Communications | Transport Diagnostics ]
+## Longer-term direction
 
-Communications:
-    Send
-    Received
+These are possibilities to preserve, not commitments:
 
-Transport Diagnostics:
-    active log filename
-    live diagnostic view/tail
-```
+- If the serial portion settles into a genuinely general subsystem, consider extracting a small independent library shared by SPT and AeonHacs/applications rather than allowing either product to own a divergent canonical copy.
+- Watch for clean general improvements developed here that should be taken back upstream to AeonHacs, without constraining SPT around AeonHacs compatibility during modernization.
+- The current Receive/Process/Transmit thread model is a migration baseline, not necessarily the final concurrency architecture. After behavioral characterization, reconsider async/await or another cleaner model where it improves correctness/readability without losing block acquisition or timing behavior.
+- Characterization tests are the bridge to deeper cleanup of acquisition, buffering, pacing, recovery, CRC/framing, and concurrency. Historical implementation details need not survive forever once required behavior is captured.
+- Make eventual handoff possible without oral history: sharp-edge comments, tests demonstrating historical protocol peculiarities, clear reusable-engine/application-policy boundaries, and permanent architecture documentation where warranted.
+- Device profiles may eventually provide convenient named complete setups for frequently used instruments.
 
-The current UI is deliberately provisional; functionality takes precedence over polish.
+## Current status
 
-The current text views append by repeatedly replacing `TextBox.Text` (`Text +=`), which becomes O(N^2) as a session grows. Replace this with an append-friendly/bounded presentation mechanism. The diagnostic disk log remains complete even if the UI retains only a bounded live tail.
+Implemented:
 
-Display/logging controls should eventually apply live where sensible rather than silently taking effect only on the next connection.
+- modern .NET/C# Avalonia application; legacy WinForms preserved under tag `legacy-winforms`;
+- currentized `SerialDevice`, incremental CRC, serial settings and data formatting;
+- `TerminalSession` application boundary;
+- Communications and Transport Diagnostics workspaces;
+- Send/Received separation, Enter-to-send, command history;
+- asynchronous ordered `DiagnosticLog`;
+- lazy automatic per-run disk logging with portable defaults and 25-file retention;
+- active log filename display;
+- initial CRC protocol controls in the UI, applied when establishing a serial session;
+- diagnostic detail control explicitly separated in the UI from automatic logging.
 
-## Current implementation status
+Important limitations/deferred work:
 
-The legacy WinForms implementation is preserved in Git history/tag `legacy-winforms`; obsolete source files have been removed from the modern tree.
-
-The repository is a flat single-project layout targeting current .NET/C# with Avalonia.
-
-Implemented foundations include:
-
-- `Serial/Crc.cs` — incremental CRC support and options;
-- `Serial/SerialPortSettings.cs` — pure serial-port settings value;
-- `Serial/SerialDataFormatter.cs` — text/escaped/byte formatting;
-- `Serial/SerialDevice.cs` — currentized serial engine with transmit/receive workers, pacing, CRC hooks, diagnostics, and counters;
-- `Diagnostics/DiagnosticLog.cs` — initial logging abstraction (currently synchronous; redesign pending);
-- `Application/TerminalSession.cs` — application-level serial-session boundary;
-- Avalonia UI with connection controls, Communications and Transport Diagnostics workspaces, Send/Received separation, Enter-to-send, and initial command history.
-
-Important current limitations:
-
-- received data still crosses the main boundary as `string`; authoritative byte-oriented receive records are pending;
-- legacy `<message><termchar><crc>` behavior is not yet characterized/proven;
-- diagnostic logging is not yet automatically persisted and is currently synchronous;
-- diagnostic/Received text views need scalable append/bounded-tail behavior;
-- automatic log naming/retention/settings are not yet implemented;
-- CRC/protocol controls are not yet exposed in the UI;
-- serial signal monitoring/control is not yet exposed;
-- `RTS_CONTROL_TOGGLE` remains unimplemented;
-- some display/logging controls need live propagation.
+- received data still crosses the main boundary as `string`; authoritative byte records pending;
+- legacy `<message><termchar><crc>` behavior not yet characterized/proven;
+- UI diagnostic/Received views need scalable append/bounded-tail behavior;
+- settings exist but do not yet have a settings UI; log filename rename remains deferred;
+- protocol controls are only the initial CRC subset; pacing/silence and other practical controls remain;
+- serial signal monitoring/control absent;
+- `RTS_CONTROL_TOGGLE` absent;
+- some controls need live propagation.
 
 ## Near-term priority
 
-1. Introduce application settings, initially including log folder/prefix/retention.
-2. Redesign `DiagnosticLog` as ordered asynchronous producer/consumer.
-3. Lazily create the automatic session log on first connection attempt; make it authoritative and apply retention.
-4. Make Transport Diagnostics a scalable live tail of that log and support backing-file rename.
-5. Introduce authoritative byte-oriented received-data/message records without casually changing framing semantics.
-6. Make Communications presentation render from those retained bytes, including correct framed-vs-streaming entry grouping and follow-tail behavior.
-7. Expose the protocol controls needed for practical Eurotherm troubleshooting.
-8. Characterize/fix CRC/termination behavior with tests before substantial receive-parser cleanup.
-9. Add serial signal diagnostics/control and later `RTS_CONTROL_TOGGLE`.
-10. Return to UI polish after the functional diagnostic path is solid.
+1. Make the tool practically useful for current instrument troubleshooting: complete the necessary protocol controls and verify byte/CRC diagnostics.
+2. Introduce authoritative byte-oriented received records without casually changing framing semantics.
+3. Render Communications from retained bytes with correct framed-vs-streaming grouping and follow-tail behavior.
+4. Characterize/fix CRC/termination behavior with tests before substantial parser cleanup.
+5. Replace O(N^2) text accumulation with scalable bounded UI tails.
+6. Add serial signal diagnostics/control and later `RTS_CONTROL_TOGGLE`.
+7. Add settings UI/log rename when it provides practical value; do not let configuration polish block core diagnostic functionality.
+8. Return to broader UI polish after the diagnostic path is solid.
 
 ## Development practice
 
-Work directly on `main` with small coherent commits. Preserve correctness and historical protocol behavior over convenience. Avoid naive O(N^2) algorithms and keep GUI-specific behavior in the GUI rather than pushing it into the serial engine.
+Work directly on `main` with small coherent commits. Preserve correctness and historical protocol behavior over convenience. Avoid naive O(N^2) algorithms and keep GUI-specific behavior in the GUI.
 
-Public/API comments should document semantics, rationale, invariants, and surprising constraints rather than restating obvious code. In particular, document behavior that a competent programmer might otherwise be tempted to "simplify" incorrectly.
-
-This file is intentionally a temporary coordination document, not permanent product documentation. Keep it synchronized with important decisions and delete it once mature documentation plus GitHub issues are sufficient.
+Public/API comments should document semantics, rationale, invariants, and surprising constraints rather than restating obvious code—especially behavior a competent programmer might otherwise “simplify” incorrectly.
