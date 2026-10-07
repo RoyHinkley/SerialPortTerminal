@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.IO.Ports;
+using System.Text;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -38,7 +39,7 @@ public sealed partial class MainWindow : Window
 
         log.EntryRecorded += AppendDiagnostic;
         session.Log = log;
-        session.ResponseReceived += ResponseReceived;
+        session.DataReceived += ReceivedDataReceived;
         session.Connected += (_, _) => PostConnectionState();
         session.Disconnecting += (_, _) => PostConnectionState(false);
 
@@ -185,7 +186,7 @@ public sealed partial class MainWindow : Window
         foreach (var oldLog in oldLogs)
         {
             try { File.Delete(oldLog); }
-            catch { /* Retention failure is non-fatal and must not prevent communications. */ }
+            catch { }
         }
     }
 
@@ -247,11 +248,12 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void ResponseReceived(string response)
+    private void ReceivedDataReceived(ReceivedData data)
     {
+        var bytes = data.GetDisplayBytes(ShowCrcBytesBox.IsChecked == true);
         var formatted = BinaryBox.IsChecked == true
-            ? SerialDataFormatter.ToByteString(response)
-            : SerialDataFormatter.Format(response, false, EscapeBox.IsChecked == true);
+            ? SerialDataFormatter.ToByteString(bytes)
+            : SerialDataFormatter.Format(Encoding.Latin1.GetString(bytes), false, EscapeBox.IsChecked == true);
         AppendReceived(formatted);
     }
 
