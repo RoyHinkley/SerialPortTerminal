@@ -42,7 +42,7 @@ public sealed partial class MainWindow : Window
         SerialPortSettings portSettings; try { portSettings = configuration.CreatePortSettings(); } catch (InvalidOperationException e) { AppendDiagnostic(e.Message); return; }
         if (!configuration.TryCreateCrcOptions(out var crc, out var crcError)) { AppendDiagnostic(crcError!); return; }
         EnsureSessionLog(); log.Record($"Connection configuration: {configuration.Describe()}"); session.SerialDevice?.Dispose();
-        var device = new SerialDevice(portSettings) { RtsMode = configuration.RtsMode, CrcConfig = crc, IgnoreCRCErrors = configuration.DeliverCrcErrors, LogSignals = configuration.LogSignals }; device.SignalsChanged += SignalsChanged; session.SerialDevice = device;
+        var device = new SerialDevice(portSettings) { RtsMode = configuration.RtsMode, CrcConfig = crc, IgnoreCRCErrors = !configuration.SuppressCrcErrors, LogSignals = configuration.LogSignals }; device.SignalsChanged += SignalsChanged; session.SerialDevice = device;
         session.LogEverything = configuration.IncludeDetailedTransportEvents; session.LogCommands = true; session.LogResponses = true;
         if (!session.Connect()) log.Record($"Unable to connect to {portSettings.PortName}."); UpdateConnectionState(session.Ready); if (!session.Ready) UpdateSignalDisplay(null);
     }
@@ -68,11 +68,28 @@ public sealed partial class MainWindow : Window
         if (session.Send(bytes)) { commandHistory.Add(expression); commandHistoryIndex = commandHistory.Count; CommandBox.SelectAll(); }
     }
     private void ReceivedDataReceived(ReceivedData data) { lock (receivedDataLock) receivedData.Add(data); AppendReceived(FormatReceivedData(data)); }
+
     private string FormatReceivedData(ReceivedData data)
     {
-        var bytes = data.GetDisplayBytes(configuration.ShowCrcBytes);
-        return configuration.ReceivedDataFormat == ReceivedDataFormat.Bytes ? SerialDataFormatter.ToByteString(bytes) : SerialDataFormatter.ToEscapedText(bytes);
+        var bytesMode = configuration.ReceivedDataFormat == ReceivedDataFormat.Bytes;
+        var payload = bytesMode ? SerialDataFormatter.ToByteString(data.PayloadBytes.Span) : SerialDataFormatter.ToEscapedText(data.PayloadBytes.Span);
+        var result = payload;
+        if (configuration.ShowCrcBytes && !data.CrcBytes.IsEmpty)
+        {
+            // CRC is protocol metadata, not text. Even printable CRC byte values must remain visibly binary.
+            var crc = bytesMode ? SerialDataFormatter.ToByteString(data.CrcBytes.Span) : string.Concat(data.CrcBytes.Span.ToArray().Select(b => $"\\x{b:X2}"));
+            result += (result.Length == 0 ? string.Empty : " ") + crc;
+        }
+        if (data.CrcValid == false)
+        {
+            var received = data.ReceivedCrc is ushort r ? $"0x{r:X4}" : "unknown";
+            var residue = data.CalculatedResidue is ushort c ? $"0x{c:X4}" : "unknown";
+            var expected = data.ExpectedResidue is ushort e ? $"0x{e:X4}" : "unknown";
+            result += $"  [CRC ERROR: received {received}, residue {residue}, expected {expected}]";
+        }
+        return result;
     }
+
     private void RerenderReceivedData() { ReceivedData[] snapshot; lock (receivedDataLock) snapshot = receivedData.ToArray(); var rendered = string.Join(Environment.NewLine, snapshot.Select(FormatReceivedData)); Dispatcher.UIThread.Post(() => { ReceivedBox.Text = rendered; ReceivedBox.CaretIndex = ReceivedBox.Text?.Length ?? 0; }); }
     private void SignalsChanged(SerialSignalState state) => Dispatcher.UIThread.Post(() => UpdateSignalDisplay(state));
     private void UpdateSignalDisplay(SerialSignalState? state)
@@ -85,7 +102,8 @@ public sealed partial class MainWindow : Window
     {
         if (e.PropertyName == nameof(TerminalConfiguration.DiagnosticWordWrap)) Dispatcher.UIThread.Post(ApplyDiagnosticWordWrap);
         else if (e.PropertyName == nameof(TerminalConfiguration.IncludeDetailedTransportEvents)) session.LogEverything = configuration.IncludeDetailedTransportEvents;
-        else if (e.PropertyName == nameof(TerminalConfiguration.LogSignals) && session.SerialDevice is { } device) device.LogSignals = configuration.LogSignals;
+        else if (e.PropertyName == nameof(TerminalConfiguration.LogSignals) && session.SerialDevice is { } signalDevice) signalDevice.LogSignals = configuration.LogSignals;
+        else if (e.PropertyName == nameof(TerminalConfiguration.SuppressCrcErrors) && session.SerialDevice is { } crcDevice) crcDevice.IgnoreCRCErrors = !configuration.SuppressCrcErrors;
         else if (e.PropertyName is nameof(TerminalConfiguration.ReceivedDataFormat) or nameof(TerminalConfiguration.ShowCrcBytes)) RerenderReceivedData();
     }
     private void Configuration_Changed(object? sender, ConfigurationChangedEventArgs e) { if (log.FileName is not null) log.Record($"Configuration changed: {e.PropertyName}: {FormatConfigurationValue(e.OldValue)} -> {FormatConfigurationValue(e.NewValue)}"); }
