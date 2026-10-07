@@ -192,7 +192,8 @@ public sealed partial class MainWindow : Window
             return;
         if (!session.Ready)
         {
-            AppendDiagnostic("Not connected.");
+            EnsureSessionLog();
+            log.Record($"Send rejected: no device connected. Command: \"{command}\"");
             return;
         }
 
