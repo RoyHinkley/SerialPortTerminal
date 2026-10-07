@@ -15,7 +15,7 @@ namespace SerialPortTerminal;
 public sealed partial class MainWindow : Window
 {
     private readonly AppSettings settings = AppSettings.Load();
-    private readonly TerminalConfiguration configuration = new();
+    private readonly TerminalConfiguration configuration = TerminalConfiguration.LoadLast();
     private readonly DiagnosticLog log = new();
     private readonly TerminalSession session = new();
     private readonly List<string> commandHistory = [];
@@ -36,6 +36,7 @@ public sealed partial class MainWindow : Window
         ReceivedFormatBox.ItemsSource = Enum.GetValues<ReceivedDataFormat>();
 
         configuration.PropertyChanged += Configuration_PropertyChanged;
+        configuration.Changed += Configuration_Changed;
         log.EntryRecorded += AppendDiagnostic;
         session.Log = log;
         session.DataReceived += ReceivedDataReceived;
@@ -59,7 +60,7 @@ public sealed partial class MainWindow : Window
             .ToArray();
 
         PortBox.ItemsSource = ports;
-        if (!ports.Contains(configuration.PortName, StringComparer.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(configuration.PortName))
             configuration.PortName = ports.FirstOrDefault();
     }
 
@@ -98,6 +99,7 @@ public sealed partial class MainWindow : Window
         }
 
         EnsureSessionLog();
+        log.Record($"Connection configuration: {configuration.Describe()}");
 
         session.SerialDevice?.Dispose();
         session.SerialDevice = new SerialDevice(portSettings)
@@ -127,6 +129,7 @@ public sealed partial class MainWindow : Window
         ApplyLogRetention(directory);
         UpdateLogFileDisplay();
         log.Record($"Diagnostic session started. Log: {log.FileName}");
+        log.Record($"Initial configuration: {configuration.Describe()}");
     }
 
     private void ApplyLogRetention(string directory)
@@ -227,6 +230,22 @@ public sealed partial class MainWindow : Window
             session.LogEverything = configuration.IncludeDetailedTransportEvents;
     }
 
+    private void Configuration_Changed(object? sender, ConfigurationChangedEventArgs e)
+    {
+        if (log.FileName is null)
+            return;
+
+        log.Record($"Configuration changed: {e.PropertyName}: {FormatConfigurationValue(e.OldValue)} -> {FormatConfigurationValue(e.NewValue)}");
+    }
+
+    private static string FormatConfigurationValue(object? value) => value switch
+    {
+        null => "(null)",
+        string text => $"\"{text}\"",
+        bool boolean => boolean ? "true" : "false",
+        _ => value.ToString() ?? "(null)"
+    };
+
     private void ApplyDiagnosticWordWrap()
     {
         DiagnosticsBox.TextWrapping = configuration.DiagnosticWordWrap
@@ -286,6 +305,9 @@ public sealed partial class MainWindow : Window
     private void MainWindow_Closed(object? sender, EventArgs e)
     {
         configuration.PropertyChanged -= Configuration_PropertyChanged;
+        configuration.Changed -= Configuration_Changed;
+        try { configuration.SaveLast(); }
+        catch { }
         log.EntryRecorded -= AppendDiagnostic;
         session.Dispose();
         log.Dispose();
