@@ -1,4 +1,3 @@
-using System.Text;
 using SerialPortTerminal.Diagnostics;
 using SerialPortTerminal.Serial;
 
@@ -43,8 +42,7 @@ public sealed class TerminalSession : IDisposable
         var bytes = command.ToArray(); LastCommand = bytes; CommandCount++;
         if (LogCommands) Log?.Record($"TerminalSession command: \"{SendDataParser.Escape(bytes)}\"");
         if (LogEverything) Log?.Record($"TerminalSession sending command #{CommandCount}.");
-        // Temporary lossless adapter until the inherited SerialDevice transmit queue is byte-native.
-        var acceptedWhileReady = SerialDevice.Command(Encoding.Latin1.GetString(bytes));
+        var acceptedWhileReady = SerialDevice.Command(bytes);
         Dispatch(CommandSent, bytes, "CommandSent"); return acceptedWhileReady;
     }
 
