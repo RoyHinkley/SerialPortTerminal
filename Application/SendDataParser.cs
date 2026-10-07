@@ -1,5 +1,5 @@
 using System.Globalization;
-using System.Text;
+using SerialPortTerminal.Serial;
 
 namespace SerialPortTerminal.Application;
 
@@ -54,23 +54,5 @@ public static class SendDataParser
     }
 
     /// <summary>Formats arbitrary bytes as an unambiguous terminal expression.</summary>
-    public static string Escape(ReadOnlySpan<byte> bytes)
-    {
-        var result = new StringBuilder(bytes.Length);
-        foreach (var b in bytes)
-        {
-            switch (b)
-            {
-                case (byte)'\\': result.Append("\\\\"); break;
-                case (byte)'\r': result.Append("\\r"); break;
-                case (byte)'\n': result.Append("\\n"); break;
-                case (byte)'\t': result.Append("\\t"); break;
-                default:
-                    if (b is >= 0x20 and <= 0x7E) result.Append((char)b);
-                    else result.Append($"\\x{b:X2}");
-                    break;
-            }
-        }
-        return result.ToString();
-    }
+    public static string Escape(ReadOnlySpan<byte> bytes) => SerialDataFormatter.ToEscapedText(bytes);
 }
