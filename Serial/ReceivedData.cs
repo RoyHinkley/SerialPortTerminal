@@ -2,9 +2,7 @@ using System.Text;
 
 namespace SerialPortTerminal.Serial;
 
-/// <summary>
-/// Immutable data retained for one receive unit recognized by <see cref="SerialDevice"/>.
-/// </summary>
+/// <summary>Immutable data retained for one receive unit recognized by <see cref="SerialDevice"/>.</summary>
 /// <remarks>
 /// <see cref="WireBytes"/> preserves the bytes associated with the receive unit before presentation
 /// removes CRC bytes. <see cref="PayloadBytes"/> is the application payload that would historically
@@ -14,26 +12,28 @@ namespace SerialPortTerminal.Serial;
 public sealed class ReceivedData
 {
     private static readonly Encoding Latin1 = Encoding.Latin1;
+    private readonly byte[] wireBytes;
+    private readonly byte[] payloadBytes;
 
     public ReceivedData(byte[] wireBytes, byte[] payloadBytes, bool? crcValid)
     {
         ArgumentNullException.ThrowIfNull(wireBytes);
         ArgumentNullException.ThrowIfNull(payloadBytes);
-        WireBytes = Array.AsReadOnly((byte[])wireBytes.Clone());
-        PayloadBytes = Array.AsReadOnly((byte[])payloadBytes.Clone());
+        this.wireBytes = (byte[])wireBytes.Clone();
+        this.payloadBytes = (byte[])payloadBytes.Clone();
         CrcValid = crcValid;
     }
 
     /// <summary>Bytes retained from the recognized receive unit, including CRC bytes when present.</summary>
-    public IReadOnlyList<byte> WireBytes { get; }
+    public ReadOnlyMemory<byte> WireBytes => wireBytes;
 
     /// <summary>Application payload after protocol CRC bytes have been removed.</summary>
-    public IReadOnlyList<byte> PayloadBytes { get; }
+    public ReadOnlyMemory<byte> PayloadBytes => payloadBytes;
 
     /// <summary>True/false when CRC was checked; null when CRC was not configured.</summary>
     public bool? CrcValid { get; }
 
-    public string PayloadText => Latin1.GetString(PayloadBytes.ToArray());
+    public string PayloadText => Latin1.GetString(payloadBytes);
 
     public byte[] GetDisplayBytes(bool includeCrcBytes) =>
         (includeCrcBytes ? WireBytes : PayloadBytes).ToArray();
