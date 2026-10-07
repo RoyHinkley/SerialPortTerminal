@@ -82,7 +82,8 @@
         <TextBox x:Name="TranscriptBox" Grid.Row="1"
                  IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap"
                  FontFamily="Consolas, Cascadia Mono, monospace"
-                 VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" />
+                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                 ScrollViewer.HorizontalScrollBarVisibility="Auto" />
 
         <Border Grid.Row="2" Padding="10" BorderThickness="1" CornerRadius="4">
           <Grid RowDefinitions="Auto,Auto" RowSpacing="6">
