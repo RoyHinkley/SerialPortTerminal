@@ -80,7 +80,14 @@
           <Border Padding="12" BorderThickness="1" CornerRadius="4">
             <StackPanel Spacing="6">
               <TextBlock Text="Signals" FontSize="16" FontWeight="SemiBold" />
-              <TextBlock Text="RTS / CTS / DTR / DSR / DCD / RI monitoring and control will live here." TextWrapping="Wrap" Opacity="0.65" />
+              <UniformGrid Columns="3" Rows="2">
+                <TextBlock x:Name="RtsSignal" Text="RTS —" />
+                <TextBlock x:Name="CtsSignal" Text="CTS —" />
+                <TextBlock x:Name="DtrSignal" Text="DTR —" />
+                <TextBlock x:Name="DsrSignal" Text="DSR —" />
+                <TextBlock x:Name="DcdSignal" Text="DCD —" />
+                <TextBlock x:Name="RiSignal" Text="RI —" />
+              </UniformGrid>
             </StackPanel>
           </Border>
         </StackPanel>
@@ -138,6 +145,6 @@
       </TabControl>
     </Grid>
 
-    <TextBlock Grid.Row="1" Text="Enter sends. Up/Down recalls sent commands. Connection and protocol configuration are locked while connected." Opacity="0.6" />
+    <TextBlock Grid.Row="1" Text="Enter sends. Up/Down recalls sent commands. Connection settings are locked while connected." Opacity="0.6" />
   </Grid>
 </Window>
