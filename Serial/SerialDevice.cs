@@ -183,11 +183,11 @@ public sealed class SerialDevice : IDisposable
                     if (c == CrcConfig!.TermChar)
                     {
                         ETXCount++;
-                        if (rxCrc.Good()) { var payload = RxbBytes(Retreat2(read)); var data = new ReceivedData(RxbBytes(read), payload, true); Trace($"ProcessRx message: {SerialDataFormatter.ToEscapedText(data.PayloadBytes.Span)}"); DispatchData(data); ResponseCount++; }
+                        if (rxCrc.Good()) { var data = CreateReceivedData(RxbBytes(read), true); Trace($"ProcessRx message: {SerialDataFormatter.ToEscapedText(data.PayloadBytes.Span)}"); DispatchData(data); ResponseCount++; }
                         else bytesWithUnexpectedTermChar = 1;
                         if (rxCrc.Good() || ErrorCrc)
                         {
-                            if (ErrorCrc) { var wire = RxbBytes(read); var data = new ReceivedData(wire, wire, false); Error($"ProcessRx: {SerialDataFormatter.ToEscapedText(data.WireBytes.Span)} [CRC Error]"); if (IgnoreCRCErrors) { DispatchData(data); ResponseCount++; } }
+                            if (ErrorCrc) { var data = CreateReceivedData(RxbBytes(read), false); Error($"ProcessRx: {SerialDataFormatter.ToEscapedText(data.WireBytes.Span)} [CRC Error]"); if (IgnoreCRCErrors) { DispatchData(data); ResponseCount++; } }
                             read = rxbHead = Advance(read); bytesWithUnexpectedTermChar = 0; rxCrc.Init(); ErrorCrc = false; continue;
                         }
                     }
@@ -212,28 +212,37 @@ public sealed class SerialDevice : IDisposable
                 var tail = rxbWrite; if (ErrorBufferOverflow) { ClearRxb(); continue; } var wire = RxbBytes(tail); rxbHead = tail; if (wire.Length == 0) continue;
                 if (rxCrc is null) { var data = new ReceivedData(wire, wire, null); Trace($"ProcessRxBySilence message: {SerialDataFormatter.ToEscapedText(data.PayloadBytes.Span)}"); DispatchData(data); ResponseCount++; continue; }
                 rxCrc.Init(); ErrorCrc = false; RxCrcCode = rxCrc.Update(wire);
-                if (rxCrc.Good()) { var payloadLength = Math.Max(0, wire.Length - 2); var payload = wire[..payloadLength]; var data = new ReceivedData(wire, payload, true); Trace($"ProcessRxBySilence message: {SerialDataFormatter.ToEscapedText(data.PayloadBytes.Span)}"); DispatchData(data); ResponseCount++; }
-                else { HandleCrcError(); Error($"ProcessRxBySilence: {SerialDataFormatter.ToEscapedText(wire)} [CRC Error]"); if (IgnoreCRCErrors) { var data = new ReceivedData(wire, wire, false); DispatchData(data); ResponseCount++; } }
+                if (rxCrc.Good()) { var data = CreateReceivedData(wire, true); Trace($"ProcessRxBySilence message: {SerialDataFormatter.ToEscapedText(data.PayloadBytes.Span)}"); DispatchData(data); ResponseCount++; }
+                else { HandleCrcError(); var data = CreateReceivedData(wire, false); Error($"ProcessRxBySilence: {SerialDataFormatter.ToEscapedText(wire)} [CRC Error]"); if (IgnoreCRCErrors) { DispatchData(data); ResponseCount++; } }
             }
         }
         catch (Exception e) { Error($"fatal ProcessRxBySilence exception: {e}"); }
         finally { Trace("ending ProcessRxBySilence thread."); }
     }
 
-    private void RxDetected(object sender, SerialDataReceivedEventArgs e) { ReceiveEvents++; rxSignal.Set(); }
-    private void PinChanged(object sender, SerialPinChangedEventArgs e)
+    /// <summary>Captures the CRC evidence while it is still in hand; presentation must not have to reconstruct it later.</summary>
+    private ReceivedData CreateReceivedData(byte[] wire, bool crcValid)
     {
-        if (LogSignals) Log?.Record($"SerialDevice @{PortSettings.PortName} pin changed: {e.EventType}");
-        PublishSignals(ring: e.EventType == SerialPinChange.Ring);
+        var payloadLength = Math.Max(0, wire.Length - 2);
+        var payload = wire[..payloadLength];
+        ushort? receivedCrc = null;
+        if (wire.Length >= 2)
+        {
+            var first = wire[^2]; var second = wire[^1];
+            receivedCrc = CrcConfig!.MsByteFirst ? (ushort)((first << 8) | second) : (ushort)(first | (second << 8));
+        }
+        return new ReceivedData(wire, payload, crcValid, receivedCrc, rxCrc!.Code, CrcConfig!.ExpectedResidue);
     }
+
+    private void RxDetected(object sender, SerialDataReceivedEventArgs e) { ReceiveEvents++; rxSignal.Set(); }
+    private void PinChanged(object sender, SerialPinChangedEventArgs e) { if (LogSignals) Log?.Record($"SerialDevice @{PortSettings.PortName} pin changed: {e.EventType}"); PublishSignals(ring: e.EventType == SerialPinChange.Ring); }
     private void PublishSignals(bool force = false, bool ring = false)
     {
         var p = port; if (p?.IsOpen != true) return;
         try
         {
             var state = new SerialSignalState(p.RtsEnable, p.CtsHolding, p.DtrEnable, p.DsrHolding, p.CDHolding, ring);
-            if (!force && lastSignalState == state) return;
-            lastSignalState = state;
+            if (!force && lastSignalState == state) return; lastSignalState = state;
             if (LogSignals) Log?.Record($"SerialDevice @{PortSettings.PortName} signals: {state}");
             var handlers = SignalsChanged; if (handlers is null) return;
             foreach (Action<SerialSignalState> handler in handlers.GetInvocationList()) try { handler(state); } catch (Exception e) { Error($"signal handler exception: {e}"); }
@@ -247,20 +256,10 @@ public sealed class SerialDevice : IDisposable
     private int Advance(int p) => (p + 1) % RxBufferSize;
     private int Retreat2(int p) => (p + RxBufferSize - 2) % RxBufferSize;
     private int ClearRxb() { rxbHead = rxbWrite; return rxbHead; }
-    private byte[] RxbBytes(int tail)
-    {
-        if (tail >= rxbHead) return rx[rxbHead..tail];
-        var result = new byte[RxBufferSize - rxbHead + tail]; Array.Copy(rx, rxbHead, result, 0, RxBufferSize - rxbHead); Array.Copy(rx, 0, result, RxBufferSize - rxbHead, tail); return result;
-    }
-    private string RxbSequence(int tail) => Ascii8.GetString(RxbBytes(tail));
+    private byte[] RxbBytes(int tail) { if (tail >= rxbHead) return rx[rxbHead..tail]; var result = new byte[RxBufferSize - rxbHead + tail]; Array.Copy(rx, rxbHead, result, 0, RxBufferSize - rxbHead); Array.Copy(rx, 0, result, RxBufferSize - rxbHead, tail); return result; }
     private void Trace(string message) { if (LogEverything) Log?.Record($"SerialDevice @{PortSettings.PortName} {message}"); }
     private void Error(string message) => Log?.Record($"SerialDevice @{PortSettings.PortName} ERROR: {message}");
-    private bool WaitForWorkers(int milliseconds)
-    {
-        var deadline = Environment.TickCount64 + milliseconds;
-        while (Environment.TickCount64 < deadline) { if (!(txThread?.IsAlive ?? false) && !(rxThread?.IsAlive ?? false) && !(processThread?.IsAlive ?? false)) return true; Thread.Sleep(5); }
-        return !(txThread?.IsAlive ?? false) && !(rxThread?.IsAlive ?? false) && !(processThread?.IsAlive ?? false);
-    }
+    private bool WaitForWorkers(int milliseconds) { var deadline = Environment.TickCount64 + milliseconds; while (Environment.TickCount64 < deadline) { if (!(txThread?.IsAlive ?? false) && !(rxThread?.IsAlive ?? false) && !(processThread?.IsAlive ?? false)) return true; Thread.Sleep(5); } return !(txThread?.IsAlive ?? false) && !(rxThread?.IsAlive ?? false) && !(processThread?.IsAlive ?? false); }
     private static void Drain(AutoResetEvent signal) { while (signal.WaitOne(0)) { } }
     public void Close() => Disconnect();
     public void Dispose() { Disconnect(); txSignal.Dispose(); rxSignal.Dispose(); processSignal.Dispose(); }
