@@ -9,8 +9,8 @@ namespace SerialPortTerminal.Application;
 /// <remarks>
 /// This is the application-level boundary between the terminal UI and the reusable serial engine.
 /// Unlike AeonHacs' SerialController, an interactive diagnostic terminal must not discard
-/// unexpected responses or hide traffic that does not match an application protocol. Every
-/// complete response remains observable.
+/// unexpected traffic or hide data that does not match an application protocol. Every complete
+/// receive unit accepted by the serial layer remains observable with its original bytes.
 /// </remarks>
 public sealed class TerminalSession : IDisposable
 {
@@ -20,7 +20,7 @@ public sealed class TerminalSession : IDisposable
 
     public event EventHandler? Connected;
     public event EventHandler? Disconnecting;
-    public event Action<string>? ResponseReceived;
+    public event Action<ReceivedData>? DataReceived;
     public event Action<string>? CommandSent;
 
     public SerialDevice? SerialDevice
@@ -37,9 +37,6 @@ public sealed class TerminalSession : IDisposable
         }
     }
 
-    /// <summary>
-    /// The diagnostic log shared with the serial engine.
-    /// </summary>
     public DiagnosticLog? Log
     {
         get => log;
@@ -52,10 +49,6 @@ public sealed class TerminalSession : IDisposable
         }
     }
 
-    /// <summary>
-    /// Enables detailed progress logging in both this session and its serial engine.
-    /// A configured log file also causes the serial engine to record detailed diagnostics.
-    /// </summary>
     public bool LogEverything
     {
         get => logEverything;
@@ -79,7 +72,8 @@ public sealed class TerminalSession : IDisposable
     public uint CommandCount { get; private set; }
     public uint ResponseCount { get; private set; }
     public string LastCommand { get; private set; } = string.Empty;
-    public string LastResponse { get; private set; } = string.Empty;
+    public ReceivedData? LastReceivedData { get; private set; }
+    public string LastResponse => LastReceivedData?.PayloadText ?? string.Empty;
 
     public TerminalSession() { }
 
@@ -116,18 +110,25 @@ public sealed class TerminalSession : IDisposable
         return acceptedWhileReady;
     }
 
-    private void Receive(string response)
+    private void Receive(ReceivedData data)
     {
-        LastResponse = response;
+        LastReceivedData = data;
         ResponseCount++;
 
         if (LogResponses)
-            Log?.Record($"TerminalSession response: \"{SerialDevice?.Escape(response) ?? response}\"");
+            Log?.Record($"TerminalSession response: \"{SerialDevice?.Escape(data.PayloadText) ?? data.PayloadText}\" CRC={FormatCrcStatus(data.CrcValid)}");
         if (LogEverything)
             Log?.Record($"TerminalSession received response #{ResponseCount}.");
 
-        Dispatch(ResponseReceived, response, "ResponseReceived");
+        Dispatch(DataReceived, data, "DataReceived");
     }
+
+    private static string FormatCrcStatus(bool? crcValid) => crcValid switch
+    {
+        true => "valid",
+        false => "invalid",
+        null => "not checked"
+    };
 
     private void AttachSerialDevice()
     {
@@ -136,7 +137,7 @@ public sealed class TerminalSession : IDisposable
 
         serialDevice.Connected += SerialDeviceConnected;
         serialDevice.Disconnecting += SerialDeviceDisconnecting;
-        serialDevice.ResponseReceived += Receive;
+        serialDevice.DataReceived += Receive;
         UpdateSerialDeviceLogging();
     }
 
@@ -147,7 +148,7 @@ public sealed class TerminalSession : IDisposable
 
         serialDevice.Connected -= SerialDeviceConnected;
         serialDevice.Disconnecting -= SerialDeviceDisconnecting;
-        serialDevice.ResponseReceived -= Receive;
+        serialDevice.DataReceived -= Receive;
         serialDevice.Log = null;
     }
 
@@ -169,6 +170,18 @@ public sealed class TerminalSession : IDisposable
             return;
 
         foreach (Action<string> handler in handlers.GetInvocationList())
+        {
+            try { handler(value); }
+            catch (Exception e) { Log?.Record($"TerminalSession ERROR: {name} handler exception: {e}"); }
+        }
+    }
+
+    private void Dispatch(Action<ReceivedData>? handlers, ReceivedData value, string name)
+    {
+        if (handlers is null)
+            return;
+
+        foreach (Action<ReceivedData> handler in handlers.GetInvocationList())
         {
             try { handler(value); }
             catch (Exception e) { Log?.Record($"TerminalSession ERROR: {name} handler exception: {e}"); }
