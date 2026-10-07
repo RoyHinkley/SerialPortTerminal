@@ -3,38 +3,43 @@ using System.Text;
 namespace SerialPortTerminal.Serial;
 
 /// <summary>Immutable data retained for one receive unit recognized by <see cref="SerialDevice"/>.</summary>
-/// <remarks>
-/// <see cref="WireBytes"/> preserves the bytes associated with the receive unit before presentation
-/// removes CRC bytes. <see cref="PayloadBytes"/> is the application payload that would historically
-/// have been forwarded as a string. Keeping both prevents display policy from destroying diagnostic
-/// evidence and allows CRC acceptance to remain independent of whether CRC bytes are shown.
-/// </remarks>
+/// <remarks>The received bytes and CRC diagnostics are evidence; presentation choices are deliberately kept outside this record.</remarks>
 public sealed class ReceivedData
 {
     private static readonly Encoding Latin1 = Encoding.Latin1;
     private readonly byte[] wireBytes;
     private readonly byte[] payloadBytes;
 
-    public ReceivedData(byte[] wireBytes, byte[] payloadBytes, bool? crcValid)
+    public ReceivedData(byte[] wireBytes, byte[] payloadBytes, bool? crcValid,
+        ushort? receivedCrc = null, ushort? calculatedResidue = null, ushort? expectedResidue = null)
     {
         ArgumentNullException.ThrowIfNull(wireBytes);
         ArgumentNullException.ThrowIfNull(payloadBytes);
         this.wireBytes = (byte[])wireBytes.Clone();
         this.payloadBytes = (byte[])payloadBytes.Clone();
         CrcValid = crcValid;
+        ReceivedCrc = receivedCrc;
+        CalculatedResidue = calculatedResidue;
+        ExpectedResidue = expectedResidue;
     }
 
-    /// <summary>Bytes retained from the recognized receive unit, including CRC bytes when present.</summary>
     public ReadOnlyMemory<byte> WireBytes => wireBytes;
-
-    /// <summary>Application payload after protocol CRC bytes have been removed.</summary>
     public ReadOnlyMemory<byte> PayloadBytes => payloadBytes;
-
-    /// <summary>True/false when CRC was checked; null when CRC was not configured.</summary>
     public bool? CrcValid { get; }
 
-    public string PayloadText => Latin1.GetString(payloadBytes);
+    /// <summary>The 16-bit CRC value carried by the message, interpreted using the configured byte order.</summary>
+    public ushort? ReceivedCrc { get; }
 
-    public byte[] GetDisplayBytes(bool includeCrcBytes) =>
-        (includeCrcBytes ? WireBytes : PayloadBytes).ToArray();
+    /// <summary>The CRC remainder after the complete received codeword was processed.</summary>
+    public ushort? CalculatedResidue { get; }
+
+    /// <summary>The residue required for a valid codeword by the active CRC configuration.</summary>
+    public ushort? ExpectedResidue { get; }
+
+    /// <summary>The CRC bytes exactly as received on the wire.</summary>
+    public ReadOnlyMemory<byte> CrcBytes => CrcValid is not null && wireBytes.Length >= 2
+        ? wireBytes.AsMemory(wireBytes.Length - 2, 2)
+        : ReadOnlyMemory<byte>.Empty;
+
+    public string PayloadText => Latin1.GetString(payloadBytes);
 }
