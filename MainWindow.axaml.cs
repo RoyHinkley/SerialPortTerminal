@@ -1,6 +1,5 @@
 using System.ComponentModel;
 using System.IO.Ports;
-using System.Text;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
@@ -29,7 +28,7 @@ public sealed partial class MainWindow : Window
         DataContext = configuration; InitializeComponent();
         BaudBox.ItemsSource = new[] { 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200 };
         ParityBox.ItemsSource = Enum.GetValues<Parity>(); DataBitsBox.ItemsSource = new[] { 5, 6, 7, 8 }; StopBitsBox.ItemsSource = new[] { StopBits.One, StopBits.OnePointFive, StopBits.Two };
-        HandshakeBox.ItemsSource = Enum.GetValues<Handshake>(); RtsBox.ItemsSource = Enum.GetValues<SerialDevice.RtsModes>(); ReceivedFormatBox.ItemsSource = Enum.GetValues<ReceivedDataFormat>();
+        HandshakeBox.ItemsSource = Enum.GetValues<Handshake>(); RtsBox.ItemsSource = Enum.GetValues<SerialDevice.RtsModes>(); ReceivedFormatBox.ItemsSource = new[] { ReceivedDataFormat.Text, ReceivedDataFormat.Bytes };
         configuration.PropertyChanged += Configuration_PropertyChanged; configuration.Changed += Configuration_Changed; log.EntryRecorded += AppendDiagnostic;
         session.Log = log; session.DataReceived += ReceivedDataReceived; session.Connected += (_, _) => PostConnectionState(); session.Disconnecting += (_, _) => PostConnectionState(false);
         RefreshPorts(); ApplyDiagnosticWordWrap(); UpdateConnectionState(false); UpdateSignalDisplay(null); UpdateLogFileDisplay(); Closed += MainWindow_Closed;
@@ -43,7 +42,7 @@ public sealed partial class MainWindow : Window
         SerialPortSettings portSettings; try { portSettings = configuration.CreatePortSettings(); } catch (InvalidOperationException e) { AppendDiagnostic(e.Message); return; }
         if (!configuration.TryCreateCrcOptions(out var crc, out var crcError)) { AppendDiagnostic(crcError!); return; }
         EnsureSessionLog(); log.Record($"Connection configuration: {configuration.Describe()}"); session.SerialDevice?.Dispose();
-        var device = new SerialDevice(portSettings) { RtsMode = configuration.RtsMode, CrcConfig = crc, IgnoreCRCErrors = configuration.DeliverCrcErrors }; device.SignalsChanged += SignalsChanged; session.SerialDevice = device;
+        var device = new SerialDevice(portSettings) { RtsMode = configuration.RtsMode, CrcConfig = crc, IgnoreCRCErrors = configuration.DeliverCrcErrors, LogSignals = configuration.LogSignals }; device.SignalsChanged += SignalsChanged; session.SerialDevice = device;
         session.LogEverything = configuration.IncludeDetailedTransportEvents; session.LogCommands = true; session.LogResponses = true;
         if (!session.Connect()) log.Record($"Unable to connect to {portSettings.PortName}."); UpdateConnectionState(session.Ready); if (!session.Ready) UpdateSignalDisplay(null);
     }
@@ -72,7 +71,7 @@ public sealed partial class MainWindow : Window
     private string FormatReceivedData(ReceivedData data)
     {
         var bytes = data.GetDisplayBytes(configuration.ShowCrcBytes);
-        return configuration.ReceivedDataFormat switch { ReceivedDataFormat.Bytes => SerialDataFormatter.ToByteString(bytes), ReceivedDataFormat.EscapedText => SerialDataFormatter.Format(Encoding.Latin1.GetString(bytes), false, true), _ => Encoding.Latin1.GetString(bytes) };
+        return configuration.ReceivedDataFormat == ReceivedDataFormat.Bytes ? SerialDataFormatter.ToByteString(bytes) : SerialDataFormatter.ToEscapedText(bytes);
     }
     private void RerenderReceivedData() { ReceivedData[] snapshot; lock (receivedDataLock) snapshot = receivedData.ToArray(); var rendered = string.Join(Environment.NewLine, snapshot.Select(FormatReceivedData)); Dispatcher.UIThread.Post(() => { ReceivedBox.Text = rendered; ReceivedBox.CaretIndex = ReceivedBox.Text?.Length ?? 0; }); }
     private void SignalsChanged(SerialSignalState state) => Dispatcher.UIThread.Post(() => UpdateSignalDisplay(state));
@@ -86,6 +85,7 @@ public sealed partial class MainWindow : Window
     {
         if (e.PropertyName == nameof(TerminalConfiguration.DiagnosticWordWrap)) Dispatcher.UIThread.Post(ApplyDiagnosticWordWrap);
         else if (e.PropertyName == nameof(TerminalConfiguration.IncludeDetailedTransportEvents)) session.LogEverything = configuration.IncludeDetailedTransportEvents;
+        else if (e.PropertyName == nameof(TerminalConfiguration.LogSignals) && session.SerialDevice is { } device) device.LogSignals = configuration.LogSignals;
         else if (e.PropertyName is nameof(TerminalConfiguration.ReceivedDataFormat) or nameof(TerminalConfiguration.ShowCrcBytes)) RerenderReceivedData();
     }
     private void Configuration_Changed(object? sender, ConfigurationChangedEventArgs e) { if (log.FileName is not null) log.Record($"Configuration changed: {e.PropertyName}: {FormatConfigurationValue(e.OldValue)} -> {FormatConfigurationValue(e.NewValue)}"); }
