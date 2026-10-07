@@ -114,12 +114,14 @@
 
         <TabItem Header="Transport Diagnostics">
           <Grid Margin="10" RowDefinitions="Auto,Auto,*" RowSpacing="6">
-            <Grid ColumnDefinitions="*,Auto">
+            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
               <StackPanel>
                 <TextBlock Text="Transport Diagnostics" FontSize="16" FontWeight="SemiBold" />
                 <TextBlock Text="Detailed record of how serial traffic was transported and processed" Opacity="0.65" />
               </StackPanel>
-              <Button Grid.Column="1" Content="Clear" Click="ClearDiagnostics_Click" VerticalAlignment="Center" />
+              <CheckBox x:Name="DiagnosticWrapBox" Grid.Column="1" Content="Word wrap" VerticalAlignment="Center"
+                        IsChecked="False" Checked="DiagnosticWrapBox_Changed" Unchecked="DiagnosticWrapBox_Changed" />
+              <Button Grid.Column="2" Content="Clear" Click="ClearDiagnostics_Click" VerticalAlignment="Center" />
             </Grid>
             <Grid Grid.Row="1" ColumnDefinitions="Auto,*" ColumnSpacing="8">
               <TextBlock Text="Log" VerticalAlignment="Center" />
