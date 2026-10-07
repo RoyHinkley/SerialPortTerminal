@@ -13,6 +13,8 @@ public sealed partial class MainWindow : Window
 {
     private readonly DiagnosticLog log = new();
     private readonly TerminalSession session = new();
+    private readonly List<string> commandHistory = [];
+    private int commandHistoryIndex;
 
     public MainWindow()
     {
@@ -31,7 +33,7 @@ public sealed partial class MainWindow : Window
         RtsBox.ItemsSource = Enum.GetValues<SerialDevice.RtsModes>();
         RtsBox.SelectedItem = SerialDevice.RtsModes.Enabled;
 
-        log.EntryRecorded += AppendTranscript;
+        log.EntryRecorded += AppendDiagnostic;
         session.Log = log;
         session.ResponseReceived += ResponseReceived;
         session.Connected += (_, _) => PostConnectionState();
@@ -77,7 +79,7 @@ public sealed partial class MainWindow : Window
 
         if (PortBox.SelectedItem is not string portName)
         {
-            AppendTranscript("No serial port is selected." + Environment.NewLine);
+            AppendDiagnostic("No serial port is selected.");
             return;
         }
 
@@ -90,16 +92,14 @@ public sealed partial class MainWindow : Window
             StopBitsBox.SelectedItem is StopBits stopBits ? stopBits : StopBits.One,
             HandshakeBox.SelectedItem is Handshake handshake ? handshake : Handshake.None))
         {
-            RtsMode = RtsBox.SelectedItem is SerialDevice.RtsModes rts ? rts : SerialDevice.RtsModes.Enabled,
-            BinaryComms = BinaryBox.IsChecked == true,
-            EscapeLoggedData = EscapeBox.IsChecked == true
+            RtsMode = RtsBox.SelectedItem is SerialDevice.RtsModes rts ? rts : SerialDevice.RtsModes.Enabled
         };
         session.LogEverything = VerboseBox.IsChecked == true;
         session.LogCommands = true;
         session.LogResponses = true;
 
         if (!session.Connect())
-            AppendTranscript($"Unable to connect to {portName}." + Environment.NewLine);
+            AppendDiagnostic($"Unable to connect to {portName}.");
         UpdateConnectionState(session.Ready);
     }
 
@@ -107,10 +107,32 @@ public sealed partial class MainWindow : Window
 
     private void CommandBox_KeyDown(object? sender, KeyEventArgs e)
     {
-        if (e.Key != Key.Enter)
-            return;
-        e.Handled = true;
-        SendCommand();
+        switch (e.Key)
+        {
+            case Key.Enter:
+                e.Handled = true;
+                SendCommand();
+                break;
+            case Key.Up:
+                e.Handled = RecallCommand(-1);
+                break;
+            case Key.Down:
+                e.Handled = RecallCommand(1);
+                break;
+        }
+    }
+
+    private bool RecallCommand(int direction)
+    {
+        if (commandHistory.Count == 0)
+            return false;
+
+        commandHistoryIndex = Math.Clamp(commandHistoryIndex + direction, 0, commandHistory.Count);
+        CommandBox.Text = commandHistoryIndex == commandHistory.Count
+            ? string.Empty
+            : commandHistory[commandHistoryIndex];
+        CommandBox.CaretIndex = CommandBox.Text?.Length ?? 0;
+        return true;
     }
 
     private void SendCommand()
@@ -120,36 +142,43 @@ public sealed partial class MainWindow : Window
             return;
         if (!session.Ready)
         {
-            AppendTranscript("Not connected." + Environment.NewLine);
+            AppendDiagnostic("Not connected.");
             return;
         }
 
         if (session.Send(command))
+        {
+            commandHistory.Add(command);
+            commandHistoryIndex = commandHistory.Count;
             CommandBox.SelectAll();
+        }
     }
 
     private void ResponseReceived(string response)
     {
-        // Detailed mode already records the receive path. This concise line remains useful when
-        // detailed transport diagnostics are disabled.
-        if (VerboseBox.IsChecked != true)
-            AppendTranscript($"RX  {session.SerialDevice?.Escape(response) ?? response}" + Environment.NewLine);
+        var formatted = BinaryBox.IsChecked == true
+            ? SerialDataFormatter.ToByteString(response)
+            : SerialDataFormatter.Format(response, false, EscapeBox.IsChecked == true);
+        AppendReceived(formatted);
     }
 
-    private void Clear_Click(object? sender, RoutedEventArgs e) => TranscriptBox.Clear();
+    private void ClearReceived_Click(object? sender, RoutedEventArgs e) => ReceivedBox.Clear();
+    private void ClearDiagnostics_Click(object? sender, RoutedEventArgs e) => DiagnosticsBox.Clear();
 
-    private void AppendTranscript(string entry)
+    private void AppendReceived(string entry) => AppendText(ReceivedBox, entry, separateEntry: true);
+    private void AppendDiagnostic(string entry) => AppendText(DiagnosticsBox, entry, separateEntry: true);
+
+    private static void AppendText(TextBox box, string entry, bool separateEntry)
     {
         if (!Dispatcher.UIThread.CheckAccess())
         {
-            Dispatcher.UIThread.Post(() => AppendTranscript(entry));
+            Dispatcher.UIThread.Post(() => AppendText(box, entry, separateEntry));
             return;
         }
 
-        TranscriptBox.Text += entry.EndsWith(Environment.NewLine, StringComparison.Ordinal)
-            ? entry
-            : entry + Environment.NewLine;
-        TranscriptBox.CaretIndex = TranscriptBox.Text?.Length ?? 0;
+        var prefix = separateEntry && !string.IsNullOrEmpty(box.Text) ? Environment.NewLine : string.Empty;
+        box.Text += prefix + entry;
+        box.CaretIndex = box.Text?.Length ?? 0;
     }
 
     private void PostConnectionState(bool? connected = null) =>
@@ -172,7 +201,7 @@ public sealed partial class MainWindow : Window
 
     private void MainWindow_Closed(object? sender, EventArgs e)
     {
-        log.EntryRecorded -= AppendTranscript;
+        log.EntryRecorded -= AppendDiagnostic;
         session.Dispose();
         log.Dispose();
     }
