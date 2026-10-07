@@ -42,6 +42,7 @@
               <TextBlock Text="Received display" FontSize="16" FontWeight="SemiBold" />
               <CheckBox x:Name="BinaryBox" Content="Show data as bytes" />
               <CheckBox x:Name="EscapeBox" Content="Escape text" />
+              <CheckBox x:Name="ShowCrcBytesBox" Content="Show CRC bytes" />
             </StackPanel>
           </Border>
 
