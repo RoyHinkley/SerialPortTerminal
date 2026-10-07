@@ -48,15 +48,30 @@
           <Border Padding="12" BorderThickness="1" CornerRadius="4">
             <StackPanel Spacing="8">
               <TextBlock Text="Diagnostic logging" FontSize="16" FontWeight="SemiBold" />
-              <CheckBox x:Name="VerboseBox" Content="Detailed transport diagnostics" IsChecked="True" />
-              <TextBlock Text="Automatic session log starts on the first connection attempt." TextWrapping="Wrap" Opacity="0.65" />
+              <CheckBox x:Name="VerboseBox" Content="Include detailed transport events" IsChecked="True" />
+              <TextBlock Text="The automatic session log continues even when detailed events are disabled." TextWrapping="Wrap" Opacity="0.65" />
             </StackPanel>
           </Border>
 
           <Border Padding="12" BorderThickness="1" CornerRadius="4">
-            <StackPanel Spacing="6">
+            <StackPanel Spacing="8">
               <TextBlock Text="Protocol" FontSize="16" FontWeight="SemiBold" />
-              <TextBlock Text="CRC, framing, termination, pacing, and receive-silence controls will live here." TextWrapping="Wrap" Opacity="0.65" />
+              <CheckBox x:Name="CrcBox" Content="Use CRC" />
+              <Grid ColumnDefinitions="92,*" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="6">
+                <TextBlock Text="Polynomial" VerticalAlignment="Center" />
+                <TextBox x:Name="CrcPolynomialBox" Grid.Column="1" Text="DAAE" />
+                <TextBlock Grid.Row="1" Text="Initial" VerticalAlignment="Center" />
+                <TextBox x:Name="CrcInitialBox" Grid.Row="1" Grid.Column="1" Text="FFFF" />
+                <TextBlock Grid.Row="2" Text="Residue" VerticalAlignment="Center" />
+                <TextBox x:Name="CrcResidueBox" Grid.Row="2" Grid.Column="1" Text="82C0" />
+                <TextBlock Grid.Row="3" Text="Term char" VerticalAlignment="Center" />
+                <TextBox x:Name="TermCharBox" Grid.Row="3" Grid.Column="1" Text="03" />
+              </Grid>
+              <CheckBox x:Name="CrcPostInvertBox" Content="Post-invert CRC" IsChecked="True" />
+              <CheckBox x:Name="CrcMsBitFirstBox" Content="MS bit first" />
+              <CheckBox x:Name="CrcMsByteFirstBox" Content="MS byte first" />
+              <CheckBox x:Name="OmitTermCharBox" Content="No term character (silence framed)" />
+              <CheckBox x:Name="IgnoreCrcErrorsBox" Content="Deliver messages with CRC errors" />
             </StackPanel>
           </Border>
 
@@ -119,6 +134,6 @@
       </TabControl>
     </Grid>
 
-    <TextBlock Grid.Row="1" Text="Enter sends. Up/Down recalls sent commands. Connection configuration is locked while connected." Opacity="0.6" />
+    <TextBlock Grid.Row="1" Text="Enter sends. Up/Down recalls sent commands. Connection and protocol configuration are locked while connected." Opacity="0.6" />
   </Grid>
 </Window>
