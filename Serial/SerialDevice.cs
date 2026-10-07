@@ -20,7 +20,7 @@ public sealed class SerialDevice : IDisposable
 {
     private const int RxBufferSize = 4096;
     private static long instanceCount;
-    private static readonly Encoding Ascii8 = Encoding.GetEncoding("iso-8859-1");
+    private static readonly Encoding Ascii8 = Encoding.Latin1;
 
     public enum RtsModes { Enabled, Disabled, Toggle }
 
@@ -38,7 +38,7 @@ public sealed class SerialDevice : IDisposable
 
     public event EventHandler? Connected;
     public event EventHandler? Disconnecting;
-    public event Action<string>? ResponseReceived;
+    public event Action<ReceivedData>? DataReceived;
 
     public uint ReceiveEvents { get; private set; }
     public uint ETXCount { get; private set; }
@@ -317,7 +317,6 @@ public sealed class SerialDevice : IDisposable
         rxbWrite = Advance(end);
         TotalBytesRead += (uint)n;
 
-        // Log the bytes actually read, not a text reconstruction, so CRC bytes remain observable.
         Trace($"Receive {n} bytes: {SerialDataFormatter.ToByteString(xferBuffer.AsSpan(0, n))} (TotalBytesRead = {TotalBytesRead})");
         processSignal.Set();
     }
@@ -342,9 +341,10 @@ public sealed class SerialDevice : IDisposable
                         ETXCount++;
                         if (rxCrc.Good())
                         {
-                            var s = RxbSequence(Retreat2(read));
-                            Trace($"ProcessRx message: {Escape(s)}");
-                            DispatchResponse(s);
+                            var payload = RxbBytes(Retreat2(read));
+                            var data = new ReceivedData(RxbBytes(read), payload, true);
+                            Trace($"ProcessRx message: {Escape(data.PayloadText)}");
+                            DispatchData(data);
                             ResponseCount++;
                         }
                         else bytesWithUnexpectedTermChar = 1;
@@ -353,9 +353,10 @@ public sealed class SerialDevice : IDisposable
                         {
                             if (ErrorCrc)
                             {
-                                var s = RxbSequence(read);
-                                Error($"ProcessRx: {Escape(s)} [CRC Error]");
-                                if (IgnoreCRCErrors) { DispatchResponse(s); ResponseCount++; }
+                                var wire = RxbBytes(read);
+                                var data = new ReceivedData(wire, wire, false);
+                                Error($"ProcessRx: {Escape(data.PayloadText)} [CRC Error]");
+                                if (IgnoreCRCErrors) { DispatchData(data); ResponseCount++; }
                             }
                             read = rxbHead = Advance(read);
                             bytesWithUnexpectedTermChar = 0;
@@ -394,19 +395,41 @@ public sealed class SerialDevice : IDisposable
             {
                 var tail = rxbWrite;
                 if (ErrorBufferOverflow) { ClearRxb(); continue; }
-                var s = RxbSequence(tail);
+                var wire = RxbBytes(tail);
                 rxbHead = tail;
-                if (rxCrc is not null)
+                if (wire.Length == 0) continue;
+
+                if (rxCrc is null)
                 {
-                    rxCrc.Init(); ErrorCrc = false;
-                    RxCrcCode = rxCrc.Update(s);
-                    if (rxCrc.Good()) s = s[..^2];
+                    var data = new ReceivedData(wire, wire, null);
+                    Trace($"ProcessRxBySilence message: {Escape(data.PayloadText)}");
+                    DispatchData(data);
+                    ResponseCount++;
+                    continue;
                 }
-                if (rxCrc is null || rxCrc.Good())
+
+                rxCrc.Init(); ErrorCrc = false;
+                RxCrcCode = rxCrc.Update(wire);
+                if (rxCrc.Good())
                 {
-                    if (s.Length > 0) { Trace($"ProcessRxBySilence message: {Escape(s)}"); DispatchResponse(s); ResponseCount++; }
+                    var payloadLength = Math.Max(0, wire.Length - 2);
+                    var payload = wire[..payloadLength];
+                    var data = new ReceivedData(wire, payload, true);
+                    Trace($"ProcessRxBySilence message: {Escape(data.PayloadText)}");
+                    DispatchData(data);
+                    ResponseCount++;
                 }
-                else { HandleCrcError(); Error($"ProcessRxBySilence: {Escape(s)} [CRC Error]"); }
+                else
+                {
+                    HandleCrcError();
+                    Error($"ProcessRxBySilence: {Escape(Ascii8.GetString(wire))} [CRC Error]");
+                    if (IgnoreCRCErrors)
+                    {
+                        var data = new ReceivedData(wire, wire, false);
+                        DispatchData(data);
+                        ResponseCount++;
+                    }
+                }
             }
         }
         catch (Exception e) { Error($"fatal ProcessRxBySilence exception: {e}"); }
@@ -417,12 +440,12 @@ public sealed class SerialDevice : IDisposable
     private void PinChanged(object sender, SerialPinChangedEventArgs e) => Trace($"pin changed: {e.EventType}");
     private void HandleCrcError() { ErrorCrc = true; CRCErrors++; }
 
-    private void DispatchResponse(string response)
+    private void DispatchData(ReceivedData data)
     {
-        var handlers = ResponseReceived;
+        var handlers = DataReceived;
         if (handlers is null) return;
-        foreach (Action<string> handler in handlers.GetInvocationList())
-            try { handler(response); } catch (Exception e) { Error($"response handler exception: {e}"); }
+        foreach (Action<ReceivedData> handler in handlers.GetInvocationList())
+            try { handler(data); } catch (Exception e) { Error($"data handler exception: {e}"); }
     }
 
     private void Dispatch(EventHandler? handlers, string name)
@@ -435,9 +458,19 @@ public sealed class SerialDevice : IDisposable
     private int Advance(int p) => (p + 1) % RxBufferSize;
     private int Retreat2(int p) => (p + RxBufferSize - 2) % RxBufferSize;
     private int ClearRxb() { rxbHead = rxbWrite; return rxbHead; }
-    private string RxbSequence(int tail) => tail >= rxbHead
-        ? Ascii8.GetString(rx, rxbHead, tail - rxbHead)
-        : Ascii8.GetString(rx, rxbHead, RxBufferSize - rxbHead) + Ascii8.GetString(rx, 0, tail);
+
+    private byte[] RxbBytes(int tail)
+    {
+        if (tail >= rxbHead)
+            return rx[rxbHead..tail];
+
+        var result = new byte[RxBufferSize - rxbHead + tail];
+        Array.Copy(rx, rxbHead, result, 0, RxBufferSize - rxbHead);
+        Array.Copy(rx, 0, result, RxBufferSize - rxbHead, tail);
+        return result;
+    }
+
+    private string RxbSequence(int tail) => Ascii8.GetString(RxbBytes(tail));
 
     private void Trace(string message)
     {
