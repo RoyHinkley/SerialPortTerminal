@@ -1,4 +1,4 @@
-using System.Globalization;
+using System.ComponentModel;
 using System.IO.Ports;
 using System.Text;
 using Avalonia.Controls;
@@ -14,6 +14,7 @@ namespace SerialPortTerminal;
 public sealed partial class MainWindow : Window
 {
     private readonly AppSettings settings = AppSettings.Load();
+    private readonly TerminalConfiguration configuration = new();
     private readonly DiagnosticLog log = new();
     private readonly TerminalSession session = new();
     private readonly List<string> commandHistory = [];
@@ -22,21 +23,18 @@ public sealed partial class MainWindow : Window
 
     public MainWindow()
     {
+        DataContext = configuration;
         InitializeComponent();
 
         BaudBox.ItemsSource = new[] { 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200 };
-        BaudBox.SelectedItem = 115200;
         ParityBox.ItemsSource = Enum.GetValues<Parity>();
-        ParityBox.SelectedItem = Parity.None;
         DataBitsBox.ItemsSource = new[] { 5, 6, 7, 8 };
-        DataBitsBox.SelectedItem = 8;
         StopBitsBox.ItemsSource = new[] { StopBits.One, StopBits.OnePointFive, StopBits.Two };
-        StopBitsBox.SelectedItem = StopBits.One;
         HandshakeBox.ItemsSource = Enum.GetValues<Handshake>();
-        HandshakeBox.SelectedItem = Handshake.None;
         RtsBox.ItemsSource = Enum.GetValues<SerialDevice.RtsModes>();
-        RtsBox.SelectedItem = SerialDevice.RtsModes.Enabled;
+        ReceivedFormatBox.ItemsSource = Enum.GetValues<ReceivedDataFormat>();
 
+        configuration.PropertyChanged += Configuration_PropertyChanged;
         log.EntryRecorded += AppendDiagnostic;
         session.Log = log;
         session.DataReceived += ReceivedDataReceived;
@@ -44,6 +42,7 @@ public sealed partial class MainWindow : Window
         session.Disconnecting += (_, _) => PostConnectionState(false);
 
         RefreshPorts();
+        ApplyDiagnosticWordWrap();
         UpdateConnectionState(false);
         UpdateLogFileDisplay();
         Closed += MainWindow_Closed;
@@ -53,16 +52,14 @@ public sealed partial class MainWindow : Window
 
     private void RefreshPorts()
     {
-        var selected = PortBox.SelectedItem as string;
         var ports = SerialPort.GetPortNames()
             .OrderBy(PortSortKey)
             .ThenBy(p => p, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
         PortBox.ItemsSource = ports;
-        PortBox.SelectedItem = ports.Contains(selected, StringComparer.OrdinalIgnoreCase)
-            ? selected
-            : ports.FirstOrDefault();
+        if (!ports.Contains(configuration.PortName, StringComparer.OrdinalIgnoreCase))
+            configuration.PortName = ports.FirstOrDefault();
     }
 
     private static int PortSortKey(string portName)
@@ -82,81 +79,39 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        if (PortBox.SelectedItem is not string portName)
+        SerialPortSettings portSettings;
+        try
         {
-            AppendDiagnostic("No serial port is selected.");
+            portSettings = configuration.CreatePortSettings();
+        }
+        catch (InvalidOperationException e)
+        {
+            AppendDiagnostic(e.Message);
             return;
         }
 
-        CrcOptions? crc = null;
-        if (CrcBox.IsChecked == true && !TryGetCrcOptions(out crc))
+        if (!configuration.TryCreateCrcOptions(out var crc, out var crcError))
+        {
+            AppendDiagnostic(crcError!);
             return;
+        }
 
         EnsureSessionLog();
 
         session.SerialDevice?.Dispose();
-        session.SerialDevice = new SerialDevice(new SerialPortSettings(
-            portName,
-            BaudBox.SelectedItem is int baud ? baud : 115200,
-            ParityBox.SelectedItem is Parity parity ? parity : Parity.None,
-            DataBitsBox.SelectedItem is int dataBits ? dataBits : 8,
-            StopBitsBox.SelectedItem is StopBits stopBits ? stopBits : StopBits.One,
-            HandshakeBox.SelectedItem is Handshake handshake ? handshake : Handshake.None))
+        session.SerialDevice = new SerialDevice(portSettings)
         {
-            RtsMode = RtsBox.SelectedItem is SerialDevice.RtsModes rts ? rts : SerialDevice.RtsModes.Enabled,
+            RtsMode = configuration.RtsMode,
             CrcConfig = crc,
-            IgnoreCRCErrors = IgnoreCrcErrorsBox.IsChecked == true
+            IgnoreCRCErrors = configuration.DeliverCrcErrors
         };
-        session.LogEverything = VerboseBox.IsChecked == true;
+        session.LogEverything = configuration.IncludeDetailedTransportEvents;
         session.LogCommands = true;
         session.LogResponses = true;
 
         if (!session.Connect())
-            log.Record($"Unable to connect to {portName}.");
+            log.Record($"Unable to connect to {portSettings.PortName}.");
         UpdateConnectionState(session.Ready);
-    }
-
-    private bool TryGetCrcOptions(out CrcOptions? options)
-    {
-        options = null;
-        if (!TryHex16(CrcPolynomialBox.Text, "CRC polynomial", out var polynomial) ||
-            !TryHex16(CrcInitialBox.Text, "CRC initial value", out var initial) ||
-            !TryHex16(CrcResidueBox.Text, "CRC expected residue", out var residue) ||
-            !TryHex8(TermCharBox.Text, "termination character", out var termChar))
-            return false;
-
-        options = new CrcOptions(
-            initial,
-            polynomial,
-            residue,
-            CrcPostInvertBox.IsChecked == true,
-            CrcMsBitFirstBox.IsChecked == true,
-            CrcMsByteFirstBox.IsChecked == true,
-            termChar,
-            OmitTermCharBox.IsChecked == true);
-        return true;
-    }
-
-    private bool TryHex16(string? text, string name, out ushort value)
-    {
-        if (ushort.TryParse(NormalizeHex(text), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out value))
-            return true;
-        AppendDiagnostic($"Invalid {name}: '{text}'. Enter 1-4 hexadecimal digits.");
-        return false;
-    }
-
-    private bool TryHex8(string? text, string name, out byte value)
-    {
-        if (byte.TryParse(NormalizeHex(text), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out value))
-            return true;
-        AppendDiagnostic($"Invalid {name}: '{text}'. Enter 1-2 hexadecimal digits.");
-        return false;
-    }
-
-    private static string NormalizeHex(string? text)
-    {
-        var value = text?.Trim() ?? string.Empty;
-        return value.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? value[2..] : value;
     }
 
     private void EnsureSessionLog()
@@ -250,29 +205,34 @@ public sealed partial class MainWindow : Window
 
     private void ReceivedDataReceived(ReceivedData data)
     {
-        // DataReceived is raised by the serial processing worker. UI display policy belongs on the
-        // UI thread; do not read Avalonia controls from the transport thread.
-        if (!Dispatcher.UIThread.CheckAccess())
+        // Received presentation is determined from application state, not Avalonia controls. The
+        // serial processing thread therefore never needs to touch an object owned by the UI thread.
+        var bytes = data.GetDisplayBytes(configuration.ShowCrcBytes);
+        var formatted = configuration.ReceivedDataFormat switch
         {
-            Dispatcher.UIThread.Post(() => ReceivedDataReceived(data));
-            return;
-        }
-
-        var bytes = data.GetDisplayBytes(ShowCrcBytesBox.IsChecked == true);
-        var formatted = BinaryBox.IsChecked == true
-            ? SerialDataFormatter.ToByteString(bytes)
-            : SerialDataFormatter.Format(Encoding.Latin1.GetString(bytes), false, EscapeBox.IsChecked == true);
+            ReceivedDataFormat.Bytes => SerialDataFormatter.ToByteString(bytes),
+            ReceivedDataFormat.EscapedText => SerialDataFormatter.Format(Encoding.Latin1.GetString(bytes), false, true),
+            _ => Encoding.Latin1.GetString(bytes)
+        };
         AppendReceived(formatted);
     }
 
-    private void DiagnosticWrapBox_Changed(object? sender, RoutedEventArgs e)
+    private void Configuration_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (DiagnosticsBox is null)
-            return;
+        if (e.PropertyName == nameof(TerminalConfiguration.DiagnosticWordWrap))
+            Dispatcher.UIThread.Post(ApplyDiagnosticWordWrap);
+        else if (e.PropertyName == nameof(TerminalConfiguration.IncludeDetailedTransportEvents))
+            session.LogEverything = configuration.IncludeDetailedTransportEvents;
+    }
 
-        var wrap = DiagnosticWrapBox.IsChecked == true;
-        DiagnosticsBox.TextWrapping = wrap ? Avalonia.Media.TextWrapping.Wrap : Avalonia.Media.TextWrapping.NoWrap;
-        DiagnosticsBox.HorizontalScrollBarVisibility = wrap ? Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled : Avalonia.Controls.Primitives.ScrollBarVisibility.Auto;
+    private void ApplyDiagnosticWordWrap()
+    {
+        DiagnosticsBox.TextWrapping = configuration.DiagnosticWordWrap
+            ? Avalonia.Media.TextWrapping.Wrap
+            : Avalonia.Media.TextWrapping.NoWrap;
+        DiagnosticsBox.HorizontalScrollBarVisibility = configuration.DiagnosticWordWrap
+            ? Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled
+            : Avalonia.Controls.Primitives.ScrollBarVisibility.Auto;
     }
 
     private void ClearReceived_Click(object? sender, RoutedEventArgs e) => ReceivedBox.Clear();
@@ -324,6 +284,7 @@ public sealed partial class MainWindow : Window
 
     private void MainWindow_Closed(object? sender, EventArgs e)
     {
+        configuration.PropertyChanged -= Configuration_PropertyChanged;
         log.EntryRecorded -= AppendDiagnostic;
         session.Dispose();
         log.Dispose();
