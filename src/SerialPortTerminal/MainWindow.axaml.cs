@@ -1,8 +1,179 @@
+using System.IO.Ports;
 using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Interactivity;
+using Avalonia.Threading;
+using SerialPortTerminal.Application;
+using SerialPortTerminal.Diagnostics;
+using SerialPortTerminal.Serial;
 
 namespace SerialPortTerminal;
 
 public sealed partial class MainWindow : Window
 {
-    public MainWindow() => InitializeComponent();
+    private readonly DiagnosticLog log = new();
+    private readonly TerminalSession session = new();
+
+    public MainWindow()
+    {
+        InitializeComponent();
+
+        BaudBox.ItemsSource = new[] { 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200 };
+        BaudBox.SelectedItem = 115200;
+        ParityBox.ItemsSource = Enum.GetValues<Parity>();
+        ParityBox.SelectedItem = Parity.None;
+        DataBitsBox.ItemsSource = new[] { 5, 6, 7, 8 };
+        DataBitsBox.SelectedItem = 8;
+        StopBitsBox.ItemsSource = new[] { StopBits.One, StopBits.OnePointFive, StopBits.Two };
+        StopBitsBox.SelectedItem = StopBits.One;
+        HandshakeBox.ItemsSource = Enum.GetValues<Handshake>();
+        HandshakeBox.SelectedItem = Handshake.None;
+        RtsBox.ItemsSource = Enum.GetValues<SerialDevice.RtsModes>();
+        RtsBox.SelectedItem = SerialDevice.RtsModes.Enabled;
+
+        log.EntryRecorded += AppendTranscript;
+        session.Log = log;
+        session.ResponseReceived += ResponseReceived;
+        session.Connected += (_, _) => PostConnectionState();
+        session.Disconnecting += (_, _) => PostConnectionState(false);
+
+        RefreshPorts();
+        UpdateConnectionState(false);
+        Closed += MainWindow_Closed;
+    }
+
+    private void RefreshPorts_Click(object? sender, RoutedEventArgs e) => RefreshPorts();
+
+    private void RefreshPorts()
+    {
+        var selected = PortBox.SelectedItem as string;
+        var ports = SerialPort.GetPortNames()
+            .OrderBy(PortSortKey)
+            .ThenBy(p => p, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        PortBox.ItemsSource = ports;
+        PortBox.SelectedItem = ports.Contains(selected, StringComparer.OrdinalIgnoreCase)
+            ? selected
+            : ports.FirstOrDefault();
+    }
+
+    private static int PortSortKey(string portName)
+    {
+        if (portName.StartsWith("COM", StringComparison.OrdinalIgnoreCase) &&
+            int.TryParse(portName.AsSpan(3), out var number))
+            return number;
+        return int.MaxValue;
+    }
+
+    private void Connect_Click(object? sender, RoutedEventArgs e)
+    {
+        if (session.Ready)
+        {
+            session.Disconnect();
+            UpdateConnectionState(false);
+            return;
+        }
+
+        if (PortBox.SelectedItem is not string portName)
+        {
+            AppendTranscript("No serial port is selected." + Environment.NewLine);
+            return;
+        }
+
+        session.SerialDevice?.Dispose();
+        session.SerialDevice = new SerialDevice(new SerialPortSettings(
+            portName,
+            BaudBox.SelectedItem is int baud ? baud : 115200,
+            ParityBox.SelectedItem is Parity parity ? parity : Parity.None,
+            DataBitsBox.SelectedItem is int dataBits ? dataBits : 8,
+            StopBitsBox.SelectedItem is StopBits stopBits ? stopBits : StopBits.One,
+            HandshakeBox.SelectedItem is Handshake handshake ? handshake : Handshake.None))
+        {
+            RtsMode = RtsBox.SelectedItem is SerialDevice.RtsModes rts ? rts : SerialDevice.RtsModes.Enabled,
+            BinaryComms = BinaryBox.IsChecked == true,
+            EscapeLoggedData = EscapeBox.IsChecked == true
+        };
+        session.LogEverything = VerboseBox.IsChecked == true;
+        session.LogCommands = true;
+        session.LogResponses = true;
+
+        if (!session.Connect())
+            AppendTranscript($"Unable to connect to {portName}." + Environment.NewLine);
+        UpdateConnectionState(session.Ready);
+    }
+
+    private void Send_Click(object? sender, RoutedEventArgs e) => SendCommand();
+
+    private void CommandBox_KeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter)
+            return;
+        e.Handled = true;
+        SendCommand();
+    }
+
+    private void SendCommand()
+    {
+        var command = CommandBox.Text ?? string.Empty;
+        if (command.Length == 0)
+            return;
+        if (!session.Ready)
+        {
+            AppendTranscript("Not connected." + Environment.NewLine);
+            return;
+        }
+
+        if (session.Send(command))
+            CommandBox.SelectAll();
+    }
+
+    private void ResponseReceived(string response)
+    {
+        // Detailed mode already records the receive path. This concise line remains useful when
+        // detailed transport diagnostics are disabled.
+        if (VerboseBox.IsChecked != true)
+            AppendTranscript($"RX  {session.SerialDevice?.Escape(response) ?? response}" + Environment.NewLine);
+    }
+
+    private void Clear_Click(object? sender, RoutedEventArgs e) => TranscriptBox.Clear();
+
+    private void AppendTranscript(string entry)
+    {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => AppendTranscript(entry));
+            return;
+        }
+
+        TranscriptBox.Text += entry.EndsWith(Environment.NewLine, StringComparison.Ordinal)
+            ? entry
+            : entry + Environment.NewLine;
+        TranscriptBox.CaretIndex = TranscriptBox.Text?.Length ?? 0;
+    }
+
+    private void PostConnectionState(bool? connected = null) =>
+        Dispatcher.UIThread.Post(() => UpdateConnectionState(connected ?? session.Ready));
+
+    private void UpdateConnectionState(bool connected)
+    {
+        ConnectionStatus.Text = connected ? $"Connected: {session.SerialDevice?.PortSettings.PortName}" : "Disconnected";
+        ConnectButton.Content = connected ? "Disconnect" : "Connect";
+        SendButton.IsEnabled = connected;
+        PortBox.IsEnabled = !connected;
+        BaudBox.IsEnabled = !connected;
+        ParityBox.IsEnabled = !connected;
+        DataBitsBox.IsEnabled = !connected;
+        StopBitsBox.IsEnabled = !connected;
+        HandshakeBox.IsEnabled = !connected;
+        RtsBox.IsEnabled = !connected;
+        RefreshPortsButton.IsEnabled = !connected;
+    }
+
+    private void MainWindow_Closed(object? sender, EventArgs e)
+    {
+        log.EntryRecorded -= AppendTranscript;
+        session.Dispose();
+        log.Dispose();
+    }
 }
