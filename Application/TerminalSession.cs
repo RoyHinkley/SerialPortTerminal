@@ -116,19 +116,15 @@ public sealed class TerminalSession : IDisposable
         ResponseCount++;
 
         if (LogResponses)
-            Log?.Record($"TerminalSession response: \"{SerialDevice?.Escape(data.PayloadText) ?? data.PayloadText}\" CRC={FormatCrcStatus(data.CrcValid)}");
+        {
+            var crcError = data.CrcValid == false ? " CRC ERROR" : string.Empty;
+            Log?.Record($"TerminalSession response: \"{SerialDevice?.Escape(data.PayloadText) ?? data.PayloadText}\"{crcError}");
+        }
         if (LogEverything)
             Log?.Record($"TerminalSession received response #{ResponseCount}.");
 
         Dispatch(DataReceived, data, "DataReceived");
     }
-
-    private static string FormatCrcStatus(bool? crcValid) => crcValid switch
-    {
-        true => "valid",
-        false => "invalid",
-        null => "not checked"
-    };
 
     private void AttachSerialDevice()
     {
