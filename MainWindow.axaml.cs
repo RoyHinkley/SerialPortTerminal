@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO.Ports;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -86,6 +87,10 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        CrcOptions? crc = null;
+        if (CrcBox.IsChecked == true && !TryGetCrcOptions(out crc))
+            return;
+
         EnsureSessionLog();
 
         session.SerialDevice?.Dispose();
@@ -97,7 +102,9 @@ public sealed partial class MainWindow : Window
             StopBitsBox.SelectedItem is StopBits stopBits ? stopBits : StopBits.One,
             HandshakeBox.SelectedItem is Handshake handshake ? handshake : Handshake.None))
         {
-            RtsMode = RtsBox.SelectedItem is SerialDevice.RtsModes rts ? rts : SerialDevice.RtsModes.Enabled
+            RtsMode = RtsBox.SelectedItem is SerialDevice.RtsModes rts ? rts : SerialDevice.RtsModes.Enabled,
+            CrcConfig = crc,
+            IgnoreCRCErrors = IgnoreCrcErrorsBox.IsChecked == true
         };
         session.LogEverything = VerboseBox.IsChecked == true;
         session.LogCommands = true;
@@ -106,6 +113,49 @@ public sealed partial class MainWindow : Window
         if (!session.Connect())
             log.Record($"Unable to connect to {portName}.");
         UpdateConnectionState(session.Ready);
+    }
+
+    private bool TryGetCrcOptions(out CrcOptions? options)
+    {
+        options = null;
+        if (!TryHex16(CrcPolynomialBox.Text, "CRC polynomial", out var polynomial) ||
+            !TryHex16(CrcInitialBox.Text, "CRC initial value", out var initial) ||
+            !TryHex16(CrcResidueBox.Text, "CRC expected residue", out var residue) ||
+            !TryHex8(TermCharBox.Text, "termination character", out var termChar))
+            return false;
+
+        options = new CrcOptions(
+            initial,
+            polynomial,
+            residue,
+            CrcPostInvertBox.IsChecked == true,
+            CrcMsBitFirstBox.IsChecked == true,
+            CrcMsByteFirstBox.IsChecked == true,
+            termChar,
+            OmitTermCharBox.IsChecked == true);
+        return true;
+    }
+
+    private bool TryHex16(string? text, string name, out ushort value)
+    {
+        if (ushort.TryParse(NormalizeHex(text), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out value))
+            return true;
+        AppendDiagnostic($"Invalid {name}: '{text}'. Enter 1-4 hexadecimal digits.");
+        return false;
+    }
+
+    private bool TryHex8(string? text, string name, out byte value)
+    {
+        if (byte.TryParse(NormalizeHex(text), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out value))
+            return true;
+        AppendDiagnostic($"Invalid {name}: '{text}'. Enter 1-2 hexadecimal digits.");
+        return false;
+    }
+
+    private static string NormalizeHex(string? text)
+    {
+        var value = text?.Trim() ?? string.Empty;
+        return value.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? value[2..] : value;
     }
 
     private void EnsureSessionLog()
@@ -240,6 +290,16 @@ public sealed partial class MainWindow : Window
         HandshakeBox.IsEnabled = !connected;
         RtsBox.IsEnabled = !connected;
         RefreshPortsButton.IsEnabled = !connected;
+        CrcBox.IsEnabled = !connected;
+        CrcPolynomialBox.IsEnabled = !connected;
+        CrcInitialBox.IsEnabled = !connected;
+        CrcResidueBox.IsEnabled = !connected;
+        TermCharBox.IsEnabled = !connected;
+        CrcPostInvertBox.IsEnabled = !connected;
+        CrcMsBitFirstBox.IsEnabled = !connected;
+        CrcMsByteFirstBox.IsEnabled = !connected;
+        OmitTermCharBox.IsEnabled = !connected;
+        IgnoreCrcErrorsBox.IsEnabled = !connected;
     }
 
     private void MainWindow_Closed(object? sender, EventArgs e)
