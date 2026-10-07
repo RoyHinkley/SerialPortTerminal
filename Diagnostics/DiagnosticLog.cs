@@ -1,49 +1,61 @@
+using System.Collections.Concurrent;
 using System.Text;
 
 namespace SerialPortTerminal.Diagnostics;
 
 /// <summary>
-/// Thread-safe diagnostic log used to observe serial communications and transport behavior.
+/// Ordered diagnostic log used to observe serial communications and transport behavior.
 /// </summary>
 /// <remarks>
-/// SerialPortTerminal is a communications troubleshooting tool, so logging is part of its
-/// functional behavior rather than merely a developer aid. Entries are exposed immediately
-/// to observers and may also be persisted to a file.
+/// Producers only timestamp and enqueue entries. File I/O and observer notification occur on a
+/// dedicated worker so diagnostics do not materially perturb the serial timing being measured.
 /// </remarks>
 public sealed class DiagnosticLog : IDisposable
 {
-    private readonly object sync = new();
+    private readonly BlockingCollection<string> entries = new(new ConcurrentQueue<string>());
+    private readonly object fileSync = new();
+    private readonly Thread worker;
     private StreamWriter? writer;
     private string? fileName;
+    private bool disposed;
+
+    public DiagnosticLog()
+    {
+        worker = new Thread(ProcessEntries)
+        {
+            IsBackground = true,
+            Name = "SerialPortTerminal diagnostic log"
+        };
+        worker.Start();
+    }
 
     /// <summary>
-    /// Raised synchronously after an entry has been accepted by the log.
+    /// Raised in log order by the diagnostic worker after an entry has been processed.
+    /// Subscriber exceptions are isolated from both the logger and serial communications.
     /// </summary>
-    /// <remarks>
-    /// Handlers run on the calling thread. UI subscribers must marshal to their UI thread.
-    /// Subscriber exceptions are isolated from the communications code that produced the entry.
-    /// </remarks>
     public event Action<string>? EntryRecorded;
 
     /// <summary>
-    /// Gets or sets the file receiving persistent diagnostic output. Set to null or empty to disable file output.
+    /// Gets or sets the file receiving persistent diagnostic output. Null disables file output.
+    /// Changing the file waits only for the file lock, never for serial producers.
     /// </summary>
     public string? FileName
     {
         get
         {
-            lock (sync)
+            lock (fileSync)
                 return fileName;
         }
         set
         {
-            lock (sync)
+            lock (fileSync)
             {
+                ThrowIfDisposed();
                 if (string.Equals(fileName, value, StringComparison.Ordinal))
                     return;
 
                 CloseWriter();
-                fileName = string.IsNullOrWhiteSpace(value) ? null : value;
+                fileName = string.IsNullOrWhiteSpace(value) ? null : Path.GetFullPath(value);
             }
         }
     }
@@ -52,59 +64,75 @@ public sealed class DiagnosticLog : IDisposable
 
     public string TimeStamp() => DateTime.Now.ToString(TimeStampFormat);
 
-    /// <summary>
-    /// Records a timestamped diagnostic entry and flushes file output so evidence survives a crash or unplug event.
-    /// </summary>
     public void Record(string entry)
     {
         ArgumentNullException.ThrowIfNull(entry);
-        var line = TimeStamp() + entry;
-
-        lock (sync)
-        {
-            if (fileName is not null)
-            {
-                EnsureWriter();
-                writer!.WriteLine(line);
-                writer.Flush();
-            }
-        }
-
-        DispatchEntry(line);
+        Enqueue(TimeStamp() + entry + Environment.NewLine);
     }
 
-    /// <summary>
-    /// Writes text without adding a timestamp or newline.
-    /// </summary>
     public void Write(string entry)
     {
         ArgumentNullException.ThrowIfNull(entry);
-
-        lock (sync)
-        {
-            if (fileName is not null)
-            {
-                EnsureWriter();
-                writer!.Write(entry);
-                writer.Flush();
-            }
-        }
-
-        DispatchEntry(entry);
+        Enqueue(entry);
     }
 
     public void WriteLine(string entry) => Write(entry + Environment.NewLine);
 
+    /// <summary>
+    /// Stops accepting entries, drains the queue, flushes the backing file, and stops the worker.
+    /// </summary>
     public void Close()
     {
-        lock (sync)
-            CloseWriter();
+        if (disposed)
+            return;
+
+        disposed = true;
+        entries.CompleteAdding();
+        if (Thread.CurrentThread != worker)
+            worker.Join();
     }
 
     public void Dispose()
     {
         Close();
+        entries.Dispose();
         GC.SuppressFinalize(this);
+    }
+
+    private void Enqueue(string entry)
+    {
+        ThrowIfDisposed();
+        entries.Add(entry);
+    }
+
+    private void ProcessEntries()
+    {
+        foreach (var entry in entries.GetConsumingEnumerable())
+        {
+            lock (fileSync)
+            {
+                if (fileName is not null)
+                {
+                    try
+                    {
+                        EnsureWriter();
+                        writer!.Write(entry);
+                        writer.Flush();
+                    }
+                    catch
+                    {
+                        // File failure must not stop diagnostics from reaching the UI. A later
+                        // settings/status surface can report persistence failure without recursively logging it.
+                        CloseWriter();
+                    }
+                }
+            }
+
+            DispatchEntry(entry);
+        }
+
+        lock (fileSync)
+            CloseWriter();
     }
 
     private void EnsureWriter()
@@ -112,12 +140,11 @@ public sealed class DiagnosticLog : IDisposable
         if (writer is not null || fileName is null)
             return;
 
-        var fullPath = Path.GetFullPath(fileName);
-        var directory = Path.GetDirectoryName(fullPath);
+        var directory = Path.GetDirectoryName(fileName);
         if (!string.IsNullOrEmpty(directory))
             Directory.CreateDirectory(directory);
 
-        writer = new StreamWriter(fullPath, append: true, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        writer = new StreamWriter(fileName, append: true, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
     }
 
     private void CloseWriter()
@@ -144,4 +171,6 @@ public sealed class DiagnosticLog : IDisposable
             }
         }
     }
+
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(disposed, this);
 }
