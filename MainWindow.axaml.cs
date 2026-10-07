@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.IO.Ports;
 using System.Text;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
@@ -70,7 +71,7 @@ public sealed partial class MainWindow : Window
         return int.MaxValue;
     }
 
-    private void Connect_Click(object? sender, RoutedEventArgs e)
+    private void Connect_Click(object? sender, RoutedEventArgs eventArgs)
     {
         if (session.Ready)
         {
@@ -84,9 +85,9 @@ public sealed partial class MainWindow : Window
         {
             portSettings = configuration.CreatePortSettings();
         }
-        catch (InvalidOperationException e)
+        catch (InvalidOperationException exception)
         {
-            AppendDiagnostic(e.Message);
+            AppendDiagnostic(exception.Message);
             return;
         }
 
@@ -230,9 +231,8 @@ public sealed partial class MainWindow : Window
         DiagnosticsBox.TextWrapping = configuration.DiagnosticWordWrap
             ? Avalonia.Media.TextWrapping.Wrap
             : Avalonia.Media.TextWrapping.NoWrap;
-        DiagnosticsBox.HorizontalScrollBarVisibility = configuration.DiagnosticWordWrap
-            ? Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled
-            : Avalonia.Controls.Primitives.ScrollBarVisibility.Auto;
+        DiagnosticsBox.SetValue(ScrollViewer.HorizontalScrollBarVisibilityProperty,
+            configuration.DiagnosticWordWrap ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto);
     }
 
     private void ClearReceived_Click(object? sender, RoutedEventArgs e) => ReceivedBox.Clear();
