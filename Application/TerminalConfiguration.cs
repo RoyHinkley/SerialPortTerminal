@@ -2,6 +2,8 @@ using System.ComponentModel;
 using System.Globalization;
 using System.IO.Ports;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using SerialPortTerminal.Serial;
 
 namespace SerialPortTerminal.Application;
@@ -13,12 +15,26 @@ public enum ReceivedDataFormat
     Bytes
 }
 
+public sealed class ConfigurationChangedEventArgs(string propertyName, object? oldValue, object? newValue) : EventArgs
+{
+    public string PropertyName { get; } = propertyName;
+    public object? OldValue { get; } = oldValue;
+    public object? NewValue { get; } = newValue;
+}
+
 /// <summary>
-/// Mutable application state edited by the UI and consumed by the terminal/serial layers.
-/// The view binds to this model; controls are not the authoritative configuration store.
+/// Owns the live terminal configuration. The UI binds to this object; serial sessions, logging,
+/// and persistence consume the same state rather than interrogating controls.
 /// </summary>
 public sealed class TerminalConfiguration : INotifyPropertyChanged
 {
+    private const string LastConfigurationFileName = "SerialPortTerminal.configuration.json";
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true,
+        Converters = { new JsonStringEnumConverter() }
+    };
+
     private string? portName;
     private int baudRate = 115200;
     private Parity parity = Parity.None;
@@ -42,6 +58,13 @@ public sealed class TerminalConfiguration : INotifyPropertyChanged
     private bool diagnosticWordWrap;
 
     public event PropertyChangedEventHandler? PropertyChanged;
+
+    /// <summary>
+    /// Reports semantic configuration changes, including old and new values, for diagnostics and
+    /// other non-UI consumers. This is intentionally separate from INotifyPropertyChanged, whose
+    /// contract does not retain the previous value.
+    /// </summary>
+    public event EventHandler<ConfigurationChangedEventArgs>? Changed;
 
     public string? PortName { get => portName; set => Set(ref portName, value); }
     public int BaudRate { get => baudRate; set => Set(ref baudRate, value); }
@@ -67,6 +90,44 @@ public sealed class TerminalConfiguration : INotifyPropertyChanged
     public bool ShowCrcBytes { get => showCrcBytes; set => Set(ref showCrcBytes, value); }
     public bool DiagnosticWordWrap { get => diagnosticWordWrap; set => Set(ref diagnosticWordWrap, value); }
 
+    [JsonIgnore]
+    public static string LastConfigurationPath => Path.Combine(AppContext.BaseDirectory, LastConfigurationFileName);
+
+    public static TerminalConfiguration LoadLast()
+    {
+        try
+        {
+            if (!File.Exists(LastConfigurationPath))
+                return new TerminalConfiguration();
+
+            return JsonSerializer.Deserialize<TerminalConfiguration>(File.ReadAllText(LastConfigurationPath), JsonOptions)
+                ?? new TerminalConfiguration();
+        }
+        catch
+        {
+            // A diagnostic tool must remain usable even if its previous configuration is damaged
+            // or was written by an incompatible development build.
+            return new TerminalConfiguration();
+        }
+    }
+
+    public void Save(string path) =>
+        File.WriteAllText(path, JsonSerializer.Serialize(this, JsonOptions));
+
+    public void SaveLast() => Save(LastConfigurationPath);
+
+    public string Describe()
+    {
+        var connection = $"{PortName ?? "(no port)"} {BaudRate} {DataBits}{ParityAbbreviation(Parity)}{StopBitsAbbreviation(StopBits)}, handshake={Handshake}, RTS={RtsMode}";
+        if (!UseCrc)
+            return connection + ", CRC=off";
+
+        return connection +
+            $", CRC=on poly={CrcPolynomial} initial={CrcInitialValue} residue={CrcExpectedResidue}" +
+            $" term={TermChar} postInvert={CrcPostInvert} msBitFirst={CrcMsBitFirst} msByteFirst={CrcMsByteFirst}" +
+            $" omitTermChar={OmitTermChar} deliverCrcErrors={DeliverCrcErrors}";
+    }
+
     public SerialPortSettings CreatePortSettings()
     {
         if (string.IsNullOrWhiteSpace(PortName))
@@ -91,6 +152,24 @@ public sealed class TerminalConfiguration : INotifyPropertyChanged
             CrcMsBitFirst, CrcMsByteFirst, term, OmitTermChar);
         return true;
     }
+
+    private static string ParityAbbreviation(Parity value) => value switch
+    {
+        Parity.None => "N",
+        Parity.Odd => "O",
+        Parity.Even => "E",
+        Parity.Mark => "M",
+        Parity.Space => "S",
+        _ => value.ToString()
+    };
+
+    private static string StopBitsAbbreviation(StopBits value) => value switch
+    {
+        StopBits.One => "1",
+        StopBits.OnePointFive => "1.5",
+        StopBits.Two => "2",
+        _ => value.ToString()
+    };
 
     private static bool TryHex16(string text, string name, out ushort value, out string? error)
     {
@@ -124,7 +203,10 @@ public sealed class TerminalConfiguration : INotifyPropertyChanged
     {
         if (EqualityComparer<T>.Default.Equals(field, value))
             return;
+
+        var oldValue = field;
         field = value;
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        Changed?.Invoke(this, new ConfigurationChangedEventArgs(propertyName!, oldValue, value));
     }
 }
