@@ -60,7 +60,8 @@ Prioritize these only after replacement-critical communications behavior is soun
 - import/export naturally using the same JSON representation;
 - persistent command history, preferably profile-specific once profiles exist;
 - named/preset commands per profile;
-- timestamped user annotations/bookmarks in the diagnostic stream (for physical actions such as swapping leads, changing an instrument address, or marking a reproduced failure).
+- timestamped user annotations/bookmarks in the diagnostic stream (for physical actions such as swapping leads, changing an instrument address, or marking a reproduced failure);
+- concise discoverable help for configuration controls, using tooltips and/or small information affordances rather than permanently expanding labels. Explain semantics and operational consequences where useful, especially CRC/framing options, `MS`/`MSB` bit and byte ordering, handshake/RTS ownership, pacing/silence settings, Received display choices, and diagnostic options.
 
 The permanent left configuration panel is provisional. A flyout/drawer is favored once configuration behavior matures so the main workspace remains focused on Communications and Transport Diagnostics.
 
@@ -230,7 +231,7 @@ The current UI is provisional and functionality takes precedence over polish. Te
 
 Display/detail controls should apply live where sensible rather than silently taking effect only on the next connection.
 
-Customized/technical UI terms need discoverable explanations, probably tooltips and/or a small information icon rather than expanding every label. In particular, do not assume users know that `MS`/`MSB` means **most significant**. Explain bit order and byte order explicitly. Apply the same pattern to other specialized terms as they appear.
+Configuration help is deliberately deferred until after the immediate field-test/replacement work. When added, specialized controls should have concise, discoverable explanations (tooltips and/or small information affordances) covering both meaning and operational consequences where those are not obvious. Do not assume users know that `MS`/`MSB` means **most significant**; explain bit order and byte order explicitly. Use the same pattern for CRC/framing, handshake/RTS, pacing/silence, Received display, and diagnostic controls rather than relying on terse labels alone.
 
 ## Deployment / installation
 
@@ -275,19 +276,8 @@ Important limitations/deferred work are captured in the replacement-readiness an
 
 Priority is now driven first by **safe legacy replacement / Hacs parity**, then usability, then convenience:
 
-1. Build CRC/framing characterization tests and prove/fix the legacy termchar-before-CRC behavior and chunk-boundary cases.
-2. Expose byte/message pacing and receive-silence controls through `TerminalConfiguration` and the UI; verify the adapted Hacs behavior.
-3. Correct unframed/streaming Received grouping and exercise reconnect/reset/error lifecycle behavior.
-4. Review the remaining legacy behaviors (Reset/counters, separate data recording, explicit CRC-value display, command-entry details) and either implement or deliberately retire each.
-5. Produce and smoke-test the self-contained Windows package on a clean machine; begin using it for real diagnostic work where the target protocol is covered.
-6. Replace O(N^2) UI text accumulation with scalable bounded live tails and correct follow-tail behavior.
-7. Add concise tooltips/information affordances for specialized terms such as most-significant bit/byte ordering.
-8. Add named configuration profiles with Save/Load/dirty/revert behavior.
-9. Add serial signal diagnostics/control and later `RTS_CONTROL_TOGGLE` as target hardware requires.
-10. Add convenience features such as persistent/profile-specific command history, preset commands, annotations, log-folder/open conveniences, and broader UI polish after the diagnostic path is solid.
-
-## Development practice
-
-Work directly on `main` with small coherent commits. Preserve correctness and historical protocol behavior over convenience. Avoid naive O(N^2) algorithms and keep GUI-specific behavior in the GUI.
-
-Public/API comments should document semantics, rationale, invariants, and surprising constraints rather than restating obvious code—especially behavior a competent programmer might otherwise “simplify” incorrectly.
+1. Field-test the current replacement build without opportunistic receive-path refactoring.
+2. Characterize CRC/framing and unframed receive grouping after the field test establishes a trustworthy baseline.
+3. Expose pacing/silence settings and exercise reconnect/reset/error lifecycle behavior.
+4. Decide remaining legacy parity items consciously.
+5. Then improve usability: named configurations/profiles, scalable live views/follow-tail behavior, configuration help/tooltips, and other conveniences.
