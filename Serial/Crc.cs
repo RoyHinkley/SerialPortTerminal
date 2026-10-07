@@ -157,11 +157,17 @@ public sealed class Crc
     }
 
     /// <summary>
-    /// Appends the CRC bytes and, unless omitted by the options, the termination character.
+    /// Constructs one complete codeword by starting from the configured initial CRC value, then
+    /// appending the resulting CRC bytes and, unless omitted, the termination character.
     /// </summary>
     public byte[] Append(string value)
     {
         ArgumentNullException.ThrowIfNull(value);
+
+        // A Crc instance is deliberately reusable and Update() is deliberately incremental, but
+        // separate transmitted codewords are independent CRC calculations. Without this reset,
+        // the result for a command depends on every command previously sent through the instance.
+        Init();
         Update(value);
 
         var checkCode = Options.PostInvert ? (ushort)~remainder : remainder;
