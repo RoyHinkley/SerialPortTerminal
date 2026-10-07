@@ -250,11 +250,29 @@ public sealed partial class MainWindow : Window
 
     private void ReceivedDataReceived(ReceivedData data)
     {
+        // DataReceived is raised by the serial processing worker. UI display policy belongs on the
+        // UI thread; do not read Avalonia controls from the transport thread.
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => ReceivedDataReceived(data));
+            return;
+        }
+
         var bytes = data.GetDisplayBytes(ShowCrcBytesBox.IsChecked == true);
         var formatted = BinaryBox.IsChecked == true
             ? SerialDataFormatter.ToByteString(bytes)
             : SerialDataFormatter.Format(Encoding.Latin1.GetString(bytes), false, EscapeBox.IsChecked == true);
         AppendReceived(formatted);
+    }
+
+    private void DiagnosticWrapBox_Changed(object? sender, RoutedEventArgs e)
+    {
+        if (DiagnosticsBox is null)
+            return;
+
+        var wrap = DiagnosticWrapBox.IsChecked == true;
+        DiagnosticsBox.TextWrapping = wrap ? Avalonia.Media.TextWrapping.Wrap : Avalonia.Media.TextWrapping.NoWrap;
+        DiagnosticsBox.HorizontalScrollBarVisibility = wrap ? Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled : Avalonia.Controls.Primitives.ScrollBarVisibility.Auto;
     }
 
     private void ClearReceived_Click(object? sender, RoutedEventArgs e) => ReceivedBox.Clear();
