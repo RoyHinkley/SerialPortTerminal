@@ -19,6 +19,8 @@ public sealed partial class MainWindow : Window
     private readonly DiagnosticLog log = new();
     private readonly TerminalSession session = new();
     private readonly List<string> commandHistory = [];
+    private readonly List<ReceivedData> receivedData = [];
+    private readonly object receivedDataLock = new();
     private readonly DateTime sessionStarted = DateTime.Now;
     private int commandHistoryIndex;
 
@@ -210,16 +212,34 @@ public sealed partial class MainWindow : Window
 
     private void ReceivedDataReceived(ReceivedData data)
     {
-        // Received presentation is determined from application state, not Avalonia controls. The
-        // serial processing thread therefore never needs to touch an object owned by the UI thread.
+        lock (receivedDataLock)
+            receivedData.Add(data);
+        AppendReceived(FormatReceivedData(data));
+    }
+
+    private string FormatReceivedData(ReceivedData data)
+    {
         var bytes = data.GetDisplayBytes(configuration.ShowCrcBytes);
-        var formatted = configuration.ReceivedDataFormat switch
+        return configuration.ReceivedDataFormat switch
         {
             ReceivedDataFormat.Bytes => SerialDataFormatter.ToByteString(bytes),
             ReceivedDataFormat.EscapedText => SerialDataFormatter.Format(Encoding.Latin1.GetString(bytes), false, true),
             _ => Encoding.Latin1.GetString(bytes)
         };
-        AppendReceived(formatted);
+    }
+
+    private void RerenderReceivedData()
+    {
+        ReceivedData[] snapshot;
+        lock (receivedDataLock)
+            snapshot = receivedData.ToArray();
+
+        var rendered = string.Join(Environment.NewLine, snapshot.Select(FormatReceivedData));
+        Dispatcher.UIThread.Post(() =>
+        {
+            ReceivedBox.Text = rendered;
+            ReceivedBox.CaretIndex = ReceivedBox.Text?.Length ?? 0;
+        });
     }
 
     private void Configuration_PropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -228,6 +248,8 @@ public sealed partial class MainWindow : Window
             Dispatcher.UIThread.Post(ApplyDiagnosticWordWrap);
         else if (e.PropertyName == nameof(TerminalConfiguration.IncludeDetailedTransportEvents))
             session.LogEverything = configuration.IncludeDetailedTransportEvents;
+        else if (e.PropertyName is nameof(TerminalConfiguration.ReceivedDataFormat) or nameof(TerminalConfiguration.ShowCrcBytes))
+            RerenderReceivedData();
     }
 
     private void Configuration_Changed(object? sender, ConfigurationChangedEventArgs e)
@@ -255,7 +277,13 @@ public sealed partial class MainWindow : Window
             configuration.DiagnosticWordWrap ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto);
     }
 
-    private void ClearReceived_Click(object? sender, RoutedEventArgs e) => ReceivedBox.Clear();
+    private void ClearReceived_Click(object? sender, RoutedEventArgs e)
+    {
+        lock (receivedDataLock)
+            receivedData.Clear();
+        ReceivedBox.Clear();
+    }
+
     private void ClearDiagnostics_Click(object? sender, RoutedEventArgs e) => DiagnosticsBox.Clear();
 
     private void AppendReceived(string entry) => AppendText(ReceivedBox, entry, separateEntry: true);
@@ -290,16 +318,6 @@ public sealed partial class MainWindow : Window
         HandshakeBox.IsEnabled = !connected;
         RtsBox.IsEnabled = !connected;
         RefreshPortsButton.IsEnabled = !connected;
-        CrcBox.IsEnabled = !connected;
-        CrcPolynomialBox.IsEnabled = !connected;
-        CrcInitialBox.IsEnabled = !connected;
-        CrcResidueBox.IsEnabled = !connected;
-        TermCharBox.IsEnabled = !connected;
-        CrcPostInvertBox.IsEnabled = !connected;
-        CrcMsBitFirstBox.IsEnabled = !connected;
-        CrcMsByteFirstBox.IsEnabled = !connected;
-        OmitTermCharBox.IsEnabled = !connected;
-        IgnoreCrcErrorsBox.IsEnabled = !connected;
     }
 
     private void MainWindow_Closed(object? sender, EventArgs e)
