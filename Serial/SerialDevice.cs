@@ -64,7 +64,7 @@ public sealed class SerialDevice : IDisposable
     private readonly byte[] xferBuffer = new byte[RxBufferSize];
     private Crc? rxCrc;
     private Crc? txCrc;
-    private ConcurrentQueue<string> commandQ = new();
+    private ConcurrentQueue<byte[]> commandQ = new();
     private volatile bool transmitting;
     private Thread? txThread;
     private Thread? rxThread;
@@ -80,12 +80,14 @@ public sealed class SerialDevice : IDisposable
 
     public SerialDevice(SerialPortSettings portSettings) => PortSettings = portSettings;
     public SerialDevice(string portName, int baudRate = 115200) : this(new SerialPortSettings(portName, baudRate)) { }
-    public string Escape(string? value = null) => SerialDataFormatter.ToEscapedText(value);
 
-    public bool Command(string command)
+    /// <summary>Queues exact payload bytes for transmission. The caller's buffer is copied before returning.</summary>
+    public bool Command(ReadOnlySpan<byte> command)
     {
-        if (string.IsNullOrEmpty(command)) return false;
-        Trace($"received Command \"{Escape(command)}\""); commandQ.Enqueue(command); txSignal.Set(); return Ready;
+        if (command.IsEmpty) return false;
+        var bytes = command.ToArray();
+        Trace($"received Command \"{SerialDataFormatter.ToEscapedText(bytes)}\"");
+        commandQ.Enqueue(bytes); txSignal.Set(); return Ready;
     }
 
     public bool Connect()
@@ -122,7 +124,7 @@ public sealed class SerialDevice : IDisposable
         Trace("starting Transmit thread.");
         try
         {
-            byte[] tx = []; var offset = 0; var command = string.Empty; txSw.Restart();
+            byte[] tx = []; var offset = 0; txSw.Restart();
             while (active)
             {
                 if (offset < tx.Length)
@@ -139,7 +141,7 @@ public sealed class SerialDevice : IDisposable
                     }
                     catch (Exception e) { Error($"transmit exception: {e}"); Thread.Sleep(Math.Max(20, MillisecondsBetweenMessages)); }
                 }
-                else { transmitting = false; if (commandQ.TryDequeue(out command)) { offset = 0; tx = txCrc is null ? Ascii8.GetBytes(command) : txCrc.Append(command); transmitting = true; } else txSignal.WaitOne(1000); }
+                else { transmitting = false; if (commandQ.TryDequeue(out var command)) { offset = 0; tx = txCrc is null ? command : txCrc.Append(command); transmitting = true; } else txSignal.WaitOne(1000); }
             }
         }
         catch (Exception e) { Error($"fatal Transmit exception: {e}"); }
