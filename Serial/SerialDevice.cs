@@ -55,6 +55,8 @@ public sealed class SerialDevice : IDisposable
     public bool Busy => Ready && HaveWork;
     public bool Idle => !Busy;
     public bool Free => Ready && !HaveWork;
+    public SerialProtocolSettings ProtocolSettings => protocolSettings;
+    public SerialProtocolSettings? PendingProtocolSettings => pendingProtocolSettings;
 
     private readonly long instanceNumber = Interlocked.Increment(ref instanceCount);
     private SerialPort? port;
@@ -77,6 +79,9 @@ public sealed class SerialDevice : IDisposable
     private volatile int rxbWrite;
     private int rxbHead;
     private SerialSignalState? lastSignalState;
+    private readonly object protocolLock = new();
+    private SerialProtocolSettings protocolSettings = SerialProtocolSettings.From(null, false);
+    private SerialProtocolSettings? pendingProtocolSettings;
 
     public SerialDevice(SerialPortSettings portSettings) => PortSettings = portSettings;
     public SerialDevice(string portName, int baudRate = 115200) : this(new SerialPortSettings(portName, baudRate)) { }
@@ -90,6 +95,20 @@ public sealed class SerialDevice : IDisposable
         commandQ.Enqueue(bytes); txSignal.Set(); return Ready;
     }
 
+    /// <summary>Stages a complete protocol snapshot for atomic adoption at the next clean receive-message boundary.</summary>
+    /// <returns>False when the requested settings require a different receive framing worker; reconnect is then required.</returns>
+    public bool StageProtocolSettings(SerialProtocolSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        lock (protocolLock)
+        {
+            if (!protocolSettings.UsesSameFramingStrategyAs(settings)) return false;
+            pendingProtocolSettings = settings;
+        }
+        processSignal.Set();
+        return true;
+    }
+
     public bool Connect()
     {
         if (connected) return true; Trace("connecting...");
@@ -98,7 +117,8 @@ public sealed class SerialDevice : IDisposable
             if (RtsMode == RtsModes.Toggle) throw new NotSupportedException("RTS_CONTROL_TOGGLE has not yet been ported to the current .NET serial implementation.");
             port = new SerialPort { PortName = PortSettings.PortName, BaudRate = PortSettings.BaudRate, Parity = PortSettings.Parity, DataBits = PortSettings.DataBits, StopBits = PortSettings.StopBits, Handshake = PortSettings.Handshake, DiscardNull = false, ReceivedBytesThreshold = 1, ReadTimeout = 20, WriteTimeout = 20, Encoding = Ascii8, RtsEnable = RtsMode == RtsModes.Enabled, DtrEnable = true };
             port.DataReceived += RxDetected; port.PinChanged += PinChanged; port.Open(); port.DiscardOutBuffer(); port.DiscardInBuffer();
-            CreateCommsSession(); active = true; rxThread = StartThread(Receive, "receive"); processThread = StartThread(CrcConfig is null || CrcConfig.OmitTermChar ? ProcessRxBySilence : ProcessRx, "process_rx"); txThread = StartThread(Transmit, "transmit"); connected = true;
+            protocolSettings = SerialProtocolSettings.From(CrcConfig, !IgnoreCRCErrors); pendingProtocolSettings = null;
+            CreateCommsSession(); active = true; rxThread = StartThread(Receive, "receive"); processThread = StartThread(protocolSettings.UseCrc && !protocolSettings.OmitTermChar ? ProcessRx : ProcessRxBySilence, "process_rx"); txThread = StartThread(Transmit, "transmit"); connected = true;
             Trace("connected."); PublishSignals(force: true); Dispatch(Connected, nameof(Connected)); return true;
         }
         catch (Exception e) { Error($"Connect failed: {e}"); Disconnect(); return false; }
@@ -115,7 +135,7 @@ public sealed class SerialDevice : IDisposable
 
     private void CreateCommsSession()
     {
-        commandQ = new(); transmitting = false; rx = new byte[RxBufferSize]; rxbWrite = rxbHead = 0; rxCrc = CrcConfig is null ? null : new Crc(CrcConfig); txCrc = CrcConfig is null ? null : new Crc(CrcConfig); ErrorBufferOverflow = ErrorCrc = false; RxCrcCode = 0; ResponseCount = 0; lastSignalState = null; txSw.Reset(); rxSw.Reset(); Drain(txSignal); Drain(rxSignal); Drain(processSignal);
+        commandQ = new(); transmitting = false; rx = new byte[RxBufferSize]; rxbWrite = rxbHead = 0; var crc = protocolSettings.CreateCrcOptions(); rxCrc = crc is null ? null : new Crc(crc); txCrc = crc is null ? null : new Crc(crc); ErrorBufferOverflow = ErrorCrc = false; RxCrcCode = 0; ResponseCount = 0; lastSignalState = null; txSw.Reset(); rxSw.Reset(); Drain(txSignal); Drain(rxSignal); Drain(processSignal);
     }
     private Thread StartThread(ThreadStart action, string role) { var thread = new Thread(action) { Name = $"SerialDevice {instanceNumber} {role}", IsBackground = true }; thread.Start(); return thread; }
 
@@ -141,7 +161,7 @@ public sealed class SerialDevice : IDisposable
                     }
                     catch (Exception e) { Error($"transmit exception: {e}"); Thread.Sleep(Math.Max(20, MillisecondsBetweenMessages)); }
                 }
-                else { transmitting = false; if (commandQ.TryDequeue(out var command)) { offset = 0; tx = txCrc is null ? command : txCrc.Append(command); transmitting = true; } else txSignal.WaitOne(1000); }
+                else { transmitting = false; if (commandQ.TryDequeue(out var command)) { ApplyPendingProtocolSettingsIfBoundary(); offset = 0; tx = txCrc is null ? command : txCrc.Append(command); transmitting = true; } else txSignal.WaitOne(1000); }
             }
         }
         catch (Exception e) { Error($"fatal Transmit exception: {e}"); }
@@ -182,21 +202,23 @@ public sealed class SerialDevice : IDisposable
                 {
                     if (bytesWithUnexpectedTermChar > 0) bytesWithUnexpectedTermChar++;
                     var c = rx[read];
-                    if (c == CrcConfig!.TermChar)
+                    var settings = protocolSettings;
+                    if (c == settings.TermChar)
                     {
                         ETXCount++;
-                        if (rxCrc.Good()) { var data = CreateReceivedData(RxbBytes(read), true); Trace($"ProcessRx message: {SerialDataFormatter.ToEscapedText(data.PayloadBytes.Span)}"); DispatchData(data); ResponseCount++; }
+                        if (rxCrc.Good()) { var data = CreateReceivedData(RxbBytes(read), true, settings); Trace($"ProcessRx message: {SerialDataFormatter.ToEscapedText(data.PayloadBytes.Span)}"); DispatchData(data); ResponseCount++; }
                         else bytesWithUnexpectedTermChar = 1;
                         if (rxCrc.Good() || ErrorCrc)
                         {
-                            if (ErrorCrc) { var data = CreateReceivedData(RxbBytes(read), false); Error($"ProcessRx: {SerialDataFormatter.ToEscapedText(data.WireBytes.Span)} [CRC Error]"); if (IgnoreCRCErrors) { DispatchData(data); ResponseCount++; } }
-                            read = rxbHead = Advance(read); bytesWithUnexpectedTermChar = 0; rxCrc.Init(); ErrorCrc = false; continue;
+                            if (ErrorCrc) { var data = CreateReceivedData(RxbBytes(read), false, settings); Error($"ProcessRx: {SerialDataFormatter.ToEscapedText(data.WireBytes.Span)} [CRC Error]"); if (!settings.SuppressCrcErrors) { DispatchData(data); ResponseCount++; } }
+                            read = rxbHead = Advance(read); bytesWithUnexpectedTermChar = 0; rxCrc.Init(); ErrorCrc = false; ApplyPendingProtocolSettingsIfBoundary(); continue;
                         }
                     }
                     RxCrcCode = rxCrc.Update(c); read = Advance(read);
-                    if (!ErrorCrc && bytesWithUnexpectedTermChar > 2) { HandleCrcError(); read = Retreat2(read); Error($"ProcessRx: {SerialDataFormatter.ToEscapedText(RxbBytes(read))} [CRC Error]"); rxbHead = read; bytesWithUnexpectedTermChar = 0; rxCrc.Init(); ErrorCrc = false; }
+                    if (!ErrorCrc && bytesWithUnexpectedTermChar > 2) { HandleCrcError(); read = Retreat2(read); Error($"ProcessRx: {SerialDataFormatter.ToEscapedText(RxbBytes(read))} [CRC Error]"); rxbHead = read; bytesWithUnexpectedTermChar = 0; rxCrc.Init(); ErrorCrc = false; ApplyPendingProtocolSettingsIfBoundary(); }
                 }
-                if (ErrorBufferOverflow) { HandleCrcError(); read = ClearRxb(); }
+                if (ErrorBufferOverflow) { HandleCrcError(); read = ClearRxb(); ApplyPendingProtocolSettingsIfBoundary(); }
+                if (read == rxbHead) ApplyPendingProtocolSettingsIfBoundary();
                 processSignal.WaitOne();
             }
         }
@@ -211,11 +233,13 @@ public sealed class SerialDevice : IDisposable
         {
             while (processSignal.WaitOne() && active)
             {
-                var tail = rxbWrite; if (ErrorBufferOverflow) { ClearRxb(); continue; } var wire = RxbBytes(tail); rxbHead = tail; if (wire.Length == 0) continue;
-                var data = DecodeSilenceFramedMessage(wire);
+                var tail = rxbWrite; if (ErrorBufferOverflow) { ClearRxb(); ApplyPendingProtocolSettingsIfBoundary(); continue; } var wire = RxbBytes(tail); rxbHead = tail; if (wire.Length == 0) { ApplyPendingProtocolSettingsIfBoundary(); continue; }
+                var settings = protocolSettings;
+                var data = DecodeSilenceFramedMessage(wire, settings);
                 if (data.CrcValid == true) { Trace($"ProcessRxBySilence message: {SerialDataFormatter.ToEscapedText(data.PayloadBytes.Span)}"); DispatchData(data); ResponseCount++; }
-                else if (data.CrcValid == false) { HandleCrcError(); Error($"ProcessRxBySilence: {SerialDataFormatter.ToEscapedText(wire)} [CRC Error]"); if (IgnoreCRCErrors) { DispatchData(data); ResponseCount++; } }
+                else if (data.CrcValid == false) { HandleCrcError(); Error($"ProcessRxBySilence: {SerialDataFormatter.ToEscapedText(wire)} [CRC Error]"); if (!settings.SuppressCrcErrors) { DispatchData(data); ResponseCount++; } }
                 else { Trace($"ProcessRxBySilence message: {SerialDataFormatter.ToEscapedText(data.PayloadBytes.Span)}"); DispatchData(data); ResponseCount++; }
+                ApplyPendingProtocolSettingsIfBoundary();
             }
         }
         catch (Exception e) { Error($"fatal ProcessRxBySilence exception: {e}"); }
@@ -224,18 +248,20 @@ public sealed class SerialDevice : IDisposable
 
     /// <summary>Decodes one message whose boundary has already been established by receive silence.</summary>
     /// <remarks>This is also the characterization-test seam. It deliberately contains the same CRC path used by the live receive worker and performs no serial-port I/O.</remarks>
-    internal ReceivedData DecodeSilenceFramedMessage(ReadOnlySpan<byte> wireBytes)
+    internal ReceivedData DecodeSilenceFramedMessage(ReadOnlySpan<byte> wireBytes) => DecodeSilenceFramedMessage(wireBytes, protocolSettings.UseCrc || CrcConfig is null ? protocolSettings : SerialProtocolSettings.From(CrcConfig, !IgnoreCRCErrors));
+
+    private ReceivedData DecodeSilenceFramedMessage(ReadOnlySpan<byte> wireBytes, SerialProtocolSettings settings)
     {
         var wire = wireBytes.ToArray();
-        if (CrcConfig is null) return new ReceivedData(wire, wire, null);
+        if (!settings.UseCrc) return new ReceivedData(wire, wire, null);
 
-        rxCrc ??= new Crc(CrcConfig);
+        rxCrc ??= new Crc(settings.CreateCrcOptions()!);
         rxCrc.Init(); ErrorCrc = false; RxCrcCode = rxCrc.Update(wire);
-        return CreateReceivedData(wire, rxCrc.Good());
+        return CreateReceivedData(wire, rxCrc.Good(), settings);
     }
 
     /// <summary>Captures the CRC evidence while it is still in hand; presentation must not have to reconstruct it later.</summary>
-    private ReceivedData CreateReceivedData(byte[] wire, bool crcValid)
+    private ReceivedData CreateReceivedData(byte[] wire, bool crcValid, SerialProtocolSettings settings)
     {
         var payloadLength = Math.Max(0, wire.Length - 2);
         var payload = wire[..payloadLength];
@@ -243,9 +269,27 @@ public sealed class SerialDevice : IDisposable
         if (wire.Length >= 2)
         {
             var first = wire[^2]; var second = wire[^1];
-            receivedCrc = CrcConfig!.MsByteFirst ? (ushort)((first << 8) | second) : (ushort)(first | (second << 8));
+            receivedCrc = settings.MsByteFirst ? (ushort)((first << 8) | second) : (ushort)(first | (second << 8));
         }
-        return new ReceivedData(wire, payload, crcValid, receivedCrc, rxCrc!.Code, CrcConfig!.ExpectedResidue);
+        return new ReceivedData(wire, payload, crcValid, receivedCrc, rxCrc!.Code, settings.ExpectedResidue);
+    }
+
+    private void ApplyPendingProtocolSettingsIfBoundary()
+    {
+        SerialProtocolSettings? pending;
+        lock (protocolLock)
+        {
+            pending = pendingProtocolSettings;
+            if (pending is null) return;
+            protocolSettings = pending;
+            pendingProtocolSettings = null;
+        }
+        var crc = pending.CreateCrcOptions();
+        rxCrc = crc is null ? null : new Crc(crc);
+        txCrc = crc is null ? null : new Crc(crc);
+        CrcConfig = crc;
+        IgnoreCRCErrors = !pending.SuppressCrcErrors;
+        Trace("applied staged protocol settings at message boundary.");
     }
 
     private void RxDetected(object sender, SerialDataReceivedEventArgs e) { ReceiveEvents++; rxSignal.Set(); }
