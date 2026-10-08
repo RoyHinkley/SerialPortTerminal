@@ -42,7 +42,17 @@ public sealed partial class MainWindow : Window
         SerialPortSettings portSettings; try { portSettings = configuration.CreatePortSettings(); } catch (InvalidOperationException e) { AppendDiagnostic(e.Message); return; }
         if (!configuration.TryCreateCrcOptions(out var crc, out var crcError)) { AppendDiagnostic(crcError!); return; }
         EnsureSessionLog(); log.Record($"Connection configuration: {configuration.Describe()}"); session.SerialDevice?.Dispose();
-        var device = new SerialDevice(portSettings) { RtsMode = configuration.RtsMode, CrcConfig = crc, IgnoreCRCErrors = !configuration.SuppressCrcErrors, LogSignals = configuration.LogSignals }; device.SignalsChanged += SignalsChanged; session.SerialDevice = device;
+        var device = new SerialDevice(portSettings)
+        {
+            RtsMode = configuration.RtsMode,
+            CrcConfig = crc,
+            IgnoreCRCErrors = !configuration.SuppressCrcErrors,
+            LogSignals = configuration.LogSignals,
+            MillisecondsBetweenMessages = configuration.MillisecondsBetweenMessages,
+            MillisecondsBetweenBytes = configuration.MillisecondsBetweenBytes,
+            MaximumMillisecondsSilenceInMessage = configuration.MaximumMillisecondsSilenceInMessage
+        };
+        device.SignalsChanged += SignalsChanged; session.SerialDevice = device;
         session.LogEverything = configuration.IncludeDetailedTransportEvents; session.LogCommands = true; session.LogResponses = true;
         if (!session.Connect()) log.Record($"Unable to connect to {portSettings.PortName}."); UpdateConnectionState(session.Ready); if (!session.Ready) UpdateSignalDisplay(null);
     }
@@ -103,8 +113,21 @@ public sealed partial class MainWindow : Window
         if (e.PropertyName == nameof(TerminalConfiguration.DiagnosticWordWrap)) Dispatcher.UIThread.Post(ApplyDiagnosticWordWrap);
         else if (e.PropertyName == nameof(TerminalConfiguration.IncludeDetailedTransportEvents)) session.LogEverything = configuration.IncludeDetailedTransportEvents;
         else if (e.PropertyName == nameof(TerminalConfiguration.LogSignals) && session.SerialDevice is { } signalDevice) signalDevice.LogSignals = configuration.LogSignals;
+        else if (IsTimingProperty(e.PropertyName)) ApplyTimingConfiguration();
         else if (IsProtocolProperty(e.PropertyName)) ApplyProtocolConfiguration();
         else if (e.PropertyName is nameof(TerminalConfiguration.ReceivedDataFormat) or nameof(TerminalConfiguration.ShowCrcBytes)) RerenderReceivedData();
+    }
+
+    private static bool IsTimingProperty(string? propertyName) => propertyName is
+        nameof(TerminalConfiguration.MillisecondsBetweenMessages) or nameof(TerminalConfiguration.MillisecondsBetweenBytes) or
+        nameof(TerminalConfiguration.MaximumMillisecondsSilenceInMessage);
+
+    private void ApplyTimingConfiguration()
+    {
+        if (session.SerialDevice is not { } device) return;
+        device.MillisecondsBetweenMessages = configuration.MillisecondsBetweenMessages;
+        device.MillisecondsBetweenBytes = configuration.MillisecondsBetweenBytes;
+        device.MaximumMillisecondsSilenceInMessage = configuration.MaximumMillisecondsSilenceInMessage;
     }
 
     private static bool IsProtocolProperty(string? propertyName) => propertyName is
