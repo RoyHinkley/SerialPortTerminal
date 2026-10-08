@@ -160,9 +160,11 @@ public sealed class TermCharacterReceiveTests
         harness.Feed(oldWire[2..]);
 
         var first = harness.WaitForMessages(1).Single();
+        // A valid old-codeword response proves the in-progress message completed under the old snapshot.
+        // Once that boundary is crossed, the staged snapshot should already be active for the next message.
         Assert.True(first.CrcValid);
         Assert.Equal(oldPayload, first.PayloadBytes.ToArray());
-        Assert.Equal(oldOptions.Polynomial, harness.ProtocolSettings.Polynomial);
+        Assert.Equal(newOptions.Polynomial, harness.ProtocolSettings.Polynomial);
 
         harness.Feed(newWire);
         var received = harness.WaitForMessages(2);
