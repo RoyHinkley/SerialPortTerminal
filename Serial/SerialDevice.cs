@@ -161,7 +161,7 @@ public sealed class SerialDevice : IDisposable
                     }
                     catch (Exception e) { Error($"transmit exception: {e}"); Thread.Sleep(Math.Max(20, MillisecondsBetweenMessages)); }
                 }
-                else { transmitting = false; if (commandQ.TryDequeue(out var command)) { ApplyPendingProtocolSettingsIfBoundary(); offset = 0; tx = txCrc is null ? command : txCrc.Append(command); transmitting = true; } else txSignal.WaitOne(1000); }
+                else { transmitting = false; if (commandQ.TryDequeue(out var command)) { offset = 0; tx = txCrc is null ? command : txCrc.Append(command); transmitting = true; } else txSignal.WaitOne(1000); }
             }
         }
         catch (Exception e) { Error($"fatal Transmit exception: {e}"); }
@@ -200,6 +200,9 @@ public sealed class SerialDevice : IDisposable
             {
                 while (read != rxbWrite)
                 {
+                    // Aeon framing reserves TermChar for the final terminator, but either of the two CRC
+                    // bytes may equal it. Seeing TermChar therefore cannot be classified until two more
+                    // bytes have been examined. This delay is protocol behavior, not accidental complexity.
                     if (bytesWithUnexpectedTermChar > 0) bytesWithUnexpectedTermChar++;
                     var c = rx[read];
                     var settings = protocolSettings;
