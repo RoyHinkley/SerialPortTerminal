@@ -34,6 +34,9 @@ public sealed class TerminalConfiguration : INotifyPropertyChanged
     private StopBits stopBits = StopBits.One;
     private Handshake handshake = Handshake.None;
     private SerialDevice.RtsModes rtsMode = SerialDevice.RtsModes.Enabled;
+    private int millisecondsBetweenMessages = -1;
+    private int millisecondsBetweenBytes = -1;
+    private int maximumMillisecondsSilenceInMessage = 5;
     private bool useCrc = true;
     private string crcPolynomial = "DAAE";
     private string crcInitialValue = "FFFF";
@@ -60,6 +63,9 @@ public sealed class TerminalConfiguration : INotifyPropertyChanged
     public StopBits StopBits { get => stopBits; set => Set(ref stopBits, value); }
     public Handshake Handshake { get => handshake; set => Set(ref handshake, value); }
     public SerialDevice.RtsModes RtsMode { get => rtsMode; set => Set(ref rtsMode, value); }
+    public int MillisecondsBetweenMessages { get => millisecondsBetweenMessages; set => Set(ref millisecondsBetweenMessages, Math.Max(-1, value)); }
+    public int MillisecondsBetweenBytes { get => millisecondsBetweenBytes; set => Set(ref millisecondsBetweenBytes, Math.Max(-1, value)); }
+    public int MaximumMillisecondsSilenceInMessage { get => maximumMillisecondsSilenceInMessage; set => Set(ref maximumMillisecondsSilenceInMessage, Math.Max(0, value)); }
     public bool UseCrc { get => useCrc; set => Set(ref useCrc, value); }
     public string CrcPolynomial { get => crcPolynomial; set => Set(ref crcPolynomial, value); }
     public string CrcInitialValue { get => crcInitialValue; set => Set(ref crcInitialValue, value); }
@@ -97,7 +103,8 @@ public sealed class TerminalConfiguration : INotifyPropertyChanged
 
     public string Describe()
     {
-        var connection = $"{PortName ?? "(no port)"} {BaudRate} {DataBits}{ParityAbbreviation(Parity)}{StopBitsAbbreviation(StopBits)}, handshake={Handshake}, RTS={RtsMode}";
+        var connection = $"{PortName ?? "(no port)"} {BaudRate} {DataBits}{ParityAbbreviation(Parity)}{StopBitsAbbreviation(StopBits)}, handshake={Handshake}, RTS={RtsMode}" +
+            $", messagePacing={MillisecondsBetweenMessages}ms bytePacing={MillisecondsBetweenBytes}ms receiveSilence={MaximumMillisecondsSilenceInMessage}ms";
         if (!UseCrc) return connection + ", CRC=off";
         return connection + $", CRC=on poly={CrcPolynomial} initial={CrcInitialValue} residue={CrcExpectedResidue}" +
             $" term={TermChar} postInvert={CrcPostInvert} msBitFirst={CrcMsBitFirst} msByteFirst={CrcMsByteFirst}" +
