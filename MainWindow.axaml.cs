@@ -103,9 +103,29 @@ public sealed partial class MainWindow : Window
         if (e.PropertyName == nameof(TerminalConfiguration.DiagnosticWordWrap)) Dispatcher.UIThread.Post(ApplyDiagnosticWordWrap);
         else if (e.PropertyName == nameof(TerminalConfiguration.IncludeDetailedTransportEvents)) session.LogEverything = configuration.IncludeDetailedTransportEvents;
         else if (e.PropertyName == nameof(TerminalConfiguration.LogSignals) && session.SerialDevice is { } signalDevice) signalDevice.LogSignals = configuration.LogSignals;
-        else if (e.PropertyName == nameof(TerminalConfiguration.SuppressCrcErrors) && session.SerialDevice is { } crcDevice) crcDevice.IgnoreCRCErrors = !configuration.SuppressCrcErrors;
+        else if (IsProtocolProperty(e.PropertyName)) ApplyProtocolConfiguration();
         else if (e.PropertyName is nameof(TerminalConfiguration.ReceivedDataFormat) or nameof(TerminalConfiguration.ShowCrcBytes)) RerenderReceivedData();
     }
+
+    private static bool IsProtocolProperty(string? propertyName) => propertyName is
+        nameof(TerminalConfiguration.UseCrc) or nameof(TerminalConfiguration.CrcPolynomial) or
+        nameof(TerminalConfiguration.CrcInitialValue) or nameof(TerminalConfiguration.CrcExpectedResidue) or
+        nameof(TerminalConfiguration.TermChar) or nameof(TerminalConfiguration.CrcPostInvert) or
+        nameof(TerminalConfiguration.CrcMsBitFirst) or nameof(TerminalConfiguration.CrcMsByteFirst) or
+        nameof(TerminalConfiguration.OmitTermChar) or nameof(TerminalConfiguration.SuppressCrcErrors);
+
+    private void ApplyProtocolConfiguration()
+    {
+        if (session.SerialDevice is not { } device || !session.Ready) return;
+        if (!configuration.TryCreateProtocolSettings(out var protocol, out var error))
+        {
+            log.Record($"Protocol configuration not applied: {error}");
+            return;
+        }
+        if (!device.StageProtocolSettings(protocol!))
+            log.Record("Protocol configuration requires reconnect because the receive framing strategy changed.");
+    }
+
     private void Configuration_Changed(object? sender, ConfigurationChangedEventArgs e) { if (log.FileName is not null) log.Record($"Configuration changed: {e.PropertyName}: {FormatConfigurationValue(e.OldValue)} -> {FormatConfigurationValue(e.NewValue)}"); }
     private static string FormatConfigurationValue(object? value) => value switch { null => "(null)", string text => $"\"{text}\"", bool b => b ? "true" : "false", _ => value.ToString() ?? "(null)" };
     private void ApplyDiagnosticWordWrap() { DiagnosticsBox.TextWrapping = configuration.DiagnosticWordWrap ? Avalonia.Media.TextWrapping.Wrap : Avalonia.Media.TextWrapping.NoWrap; DiagnosticsBox.SetValue(ScrollViewer.HorizontalScrollBarVisibilityProperty, configuration.DiagnosticWordWrap ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto); }
