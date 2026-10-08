@@ -168,6 +168,7 @@ public sealed class TermCharacterReceiveTests
         private readonly FieldInfo rxField = Field("rx");
         private readonly FieldInfo rxbWriteField = Field("rxbWrite");
         private readonly FieldInfo rxCrcField = Field("rxCrc");
+        private readonly FieldInfo protocolSettingsField = Field("protocolSettings");
         private readonly FieldInfo processSignalField = Field("processSignal");
         private readonly AutoResetEvent processSignal;
         private readonly Thread worker;
@@ -178,6 +179,7 @@ public sealed class TermCharacterReceiveTests
         {
             device = new SerialDevice("TEST") { CrcConfig = options };
             device.DataReceived += OnDataReceived;
+            protocolSettingsField.SetValue(device, SerialProtocolSettings.From(options, suppressCrcErrors: false));
             rxCrcField.SetValue(device, new Crc(options));
             activeField.SetValue(device, true);
             processSignal = (AutoResetEvent)processSignalField.GetValue(device)!;
