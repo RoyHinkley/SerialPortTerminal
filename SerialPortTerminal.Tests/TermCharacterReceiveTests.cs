@@ -1,0 +1,219 @@
+using System.Reflection;
+using SerialPortTerminal.Serial;
+
+namespace SerialPortTerminal.Tests;
+
+public sealed class TermCharacterReceiveTests
+{
+    private static CrcOptions TerminatedCrc() => new()
+    {
+        Polynomial = 0xA001,
+        InitialValue = 0xFFFF,
+        ExpectedResidue = 0x0000,
+        PostInvert = false,
+        MsBitFirst = false,
+        MsByteFirst = false,
+        TermChar = 0x03,
+        OmitTermChar = false
+    };
+
+    [Fact]
+    public void Parser_accepts_ordinary_valid_message()
+    {
+        var options = TerminatedCrc();
+        var payload = new byte[] { 0x10, 0x20, 0x30 };
+        var wire = new Crc(options).Append(payload);
+
+        using var harness = new ProcessRxHarness(options);
+        harness.Feed(wire);
+
+        var received = harness.WaitForMessages(1).Single();
+        Assert.True(received.CrcValid);
+        Assert.Equal(payload, received.PayloadBytes.ToArray());
+    }
+
+    [Fact]
+    public void Parser_rejects_embedded_term_candidates_and_finds_real_terminator()
+    {
+        var options = TerminatedCrc();
+        var payload = new byte[] { 0x10, 0x03, 0x20, 0x03, 0x30 };
+        var wire = new Crc(options).Append(payload);
+
+        using var harness = new ProcessRxHarness(options);
+        harness.Feed(wire);
+
+        var received = harness.WaitForMessages(1).Single();
+        Assert.True(received.CrcValid);
+        Assert.Equal(payload, received.PayloadBytes.ToArray());
+    }
+
+    [Fact]
+    public void Parser_handles_term_character_in_low_crc_byte()
+    {
+        var options = TerminatedCrc();
+        var (payload, wire) = FindCodeword(options, bytes => bytes[^3] == options.TermChar);
+
+        using var harness = new ProcessRxHarness(options);
+        harness.Feed(wire);
+
+        var received = harness.WaitForMessages(1).Single();
+        Assert.True(received.CrcValid);
+        Assert.Equal(payload, received.PayloadBytes.ToArray());
+    }
+
+    [Fact]
+    public void Parser_handles_term_character_in_high_crc_byte()
+    {
+        var options = TerminatedCrc();
+        var (payload, wire) = FindCodeword(options, bytes => bytes[^2] == options.TermChar);
+
+        using var harness = new ProcessRxHarness(options);
+        harness.Feed(wire);
+
+        var received = harness.WaitForMessages(1).Single();
+        Assert.True(received.CrcValid);
+        Assert.Equal(payload, received.PayloadBytes.ToArray());
+    }
+
+    [Fact]
+    public void Parser_preserves_state_across_every_fragment_boundary()
+    {
+        var options = TerminatedCrc();
+        var (payload, wire) = FindCodeword(options, bytes => bytes[^3] == options.TermChar);
+
+        for (var split = 1; split < wire.Length; split++)
+        {
+            using var harness = new ProcessRxHarness(options);
+            harness.Feed(wire[..split]);
+            harness.Feed(wire[split..]);
+
+            var received = harness.WaitForMessages(1).Single();
+            Assert.True(received.CrcValid);
+            Assert.Equal(payload, received.PayloadBytes.ToArray());
+        }
+    }
+
+    [Fact]
+    public void Parser_delivers_back_to_back_messages_from_one_chunk()
+    {
+        var options = TerminatedCrc();
+        var firstPayload = new byte[] { 0x10, 0x03, 0x20 };
+        var secondPayload = FindCodeword(options, bytes => bytes[^2] == options.TermChar).Payload;
+        var firstWire = new Crc(options).Append(firstPayload);
+        var secondWire = new Crc(options).Append(secondPayload);
+        var combined = firstWire.Concat(secondWire).ToArray();
+
+        using var harness = new ProcessRxHarness(options);
+        harness.Feed(combined);
+
+        var received = harness.WaitForMessages(2);
+        Assert.Equal(firstPayload, received[0].PayloadBytes.ToArray());
+        Assert.Equal(secondPayload, received[1].PayloadBytes.ToArray());
+        Assert.All(received, message => Assert.True(message.CrcValid));
+    }
+
+    private static (byte[] Payload, byte[] Wire) FindCodeword(CrcOptions options, Func<byte[], bool> predicate)
+    {
+        for (var value = 0; value <= ushort.MaxValue; value++)
+        {
+            var payload = new byte[] { (byte)value, (byte)(value >> 8) };
+            var wire = new Crc(options).Append(payload);
+            if (predicate(wire)) return (payload, wire);
+        }
+
+        throw new InvalidOperationException("Unable to synthesize requested CRC edge case.");
+    }
+
+    /// <summary>
+    /// Characterization harness for the inherited ProcessRx worker. Reflection is intentional here:
+    /// it lets tests drive the real parser without adding a test-only API or refactoring delicate production code.
+    /// </summary>
+    private sealed class ProcessRxHarness : IDisposable
+    {
+        private const int WaitMilliseconds = 2000;
+        private readonly SerialDevice device;
+        private readonly FieldInfo activeField = Field("active");
+        private readonly FieldInfo rxField = Field("rx");
+        private readonly FieldInfo rxbWriteField = Field("rxbWrite");
+        private readonly FieldInfo rxCrcField = Field("rxCrc");
+        private readonly FieldInfo processSignalField = Field("processSignal");
+        private readonly AutoResetEvent processSignal;
+        private readonly Thread worker;
+        private readonly List<ReceivedData> messages = [];
+        private readonly object sync = new();
+
+        public ProcessRxHarness(CrcOptions options)
+        {
+            device = new SerialDevice("TEST") { CrcConfig = options };
+            device.DataReceived += OnDataReceived;
+            rxCrcField.SetValue(device, new Crc(options));
+            activeField.SetValue(device, true);
+            processSignal = (AutoResetEvent)processSignalField.GetValue(device)!;
+            var processRx = typeof(SerialDevice).GetMethod("ProcessRx", BindingFlags.Instance | BindingFlags.NonPublic)
+                ?? throw new MissingMethodException(typeof(SerialDevice).FullName, "ProcessRx");
+            worker = new Thread(() => processRx.Invoke(device, null)) { IsBackground = true };
+            worker.Start();
+            WaitUntilWorkerIsWaiting();
+        }
+
+        public void Feed(ReadOnlySpan<byte> bytes)
+        {
+            var rx = (byte[])rxField.GetValue(device)!;
+            var write = (int)rxbWriteField.GetValue(device)!;
+            foreach (var value in bytes)
+            {
+                rx[write] = value;
+                write = (write + 1) % rx.Length;
+            }
+            rxbWriteField.SetValue(device, write);
+            processSignal.Set();
+        }
+
+        public IReadOnlyList<ReceivedData> WaitForMessages(int count)
+        {
+            var deadline = Environment.TickCount64 + WaitMilliseconds;
+            lock (sync)
+            {
+                while (messages.Count < count)
+                {
+                    var remaining = deadline - Environment.TickCount64;
+                    if (remaining <= 0) throw new TimeoutException($"Expected {count} messages; received {messages.Count}.");
+                    Monitor.Wait(sync, (int)Math.Min(remaining, int.MaxValue));
+                }
+                return messages.ToArray();
+            }
+        }
+
+        private void OnDataReceived(ReceivedData data)
+        {
+            lock (sync)
+            {
+                messages.Add(data);
+                Monitor.PulseAll(sync);
+            }
+        }
+
+        private void WaitUntilWorkerIsWaiting()
+        {
+            var deadline = Environment.TickCount64 + WaitMilliseconds;
+            while (Environment.TickCount64 < deadline)
+            {
+                if ((worker.ThreadState & ThreadState.WaitSleepJoin) != 0) return;
+                Thread.Yield();
+            }
+            throw new TimeoutException("ProcessRx worker did not reach its initial wait state.");
+        }
+
+        public void Dispose()
+        {
+            activeField.SetValue(device, false);
+            processSignal.Set();
+            worker.Join(WaitMilliseconds);
+            device.DataReceived -= OnDataReceived;
+            device.Dispose();
+        }
+
+        private static FieldInfo Field(string name) => typeof(SerialDevice).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new MissingFieldException(typeof(SerialDevice).FullName, name);
+    }
+}
