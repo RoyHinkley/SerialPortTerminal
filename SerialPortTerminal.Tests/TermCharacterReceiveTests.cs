@@ -33,18 +33,24 @@ public sealed class TermCharacterReceiveTests
     }
 
     [Fact]
-    public void Parser_rejects_embedded_term_candidates_and_finds_real_terminator()
+    public void Illegal_term_character_in_payload_is_rejected_and_parser_recovers()
     {
         var options = TerminatedCrc();
-        var payload = new byte[] { 0x10, 0x03, 0x20, 0x03, 0x30 };
-        var wire = new Crc(options).Append(payload);
+        // Aeon framing reserves ETX for the terminator (except when it occurs in either CRC byte).
+        // This deliberately invalid message verifies the inherited recovery rule rather than treating
+        // arbitrary binary payloads as a supported protocol feature.
+        var illegalPayload = new byte[] { 0x10, options.TermChar, 0x20, 0x30 };
+        var invalidWire = new Crc(options).Append(illegalPayload);
+        var validPayload = new byte[] { 0x41, 0x42, 0x43 };
+        var validWire = new Crc(options).Append(validPayload);
 
         using var harness = new ProcessRxHarness(options);
-        harness.Feed(wire);
+        harness.Feed(invalidWire.Concat(validWire).ToArray());
 
         var received = harness.WaitForMessages(1).Single();
         Assert.True(received.CrcValid);
-        Assert.Equal(payload, received.PayloadBytes.ToArray());
+        Assert.Equal(validPayload, received.PayloadBytes.ToArray());
+        Assert.Equal(1u, harness.CrcErrors);
     }
 
     [Fact]
@@ -94,11 +100,14 @@ public sealed class TermCharacterReceiveTests
     }
 
     [Fact]
-    public void Parser_delivers_back_to_back_messages_from_one_chunk()
+    public void Parser_delivers_legal_back_to_back_messages_from_one_chunk()
     {
         var options = TerminatedCrc();
-        var firstPayload = new byte[] { 0x10, 0x03, 0x20 };
+        var firstPayload = new byte[] { 0x10, 0x20, 0x30 };
         var secondPayload = FindCodeword(options, bytes => bytes[^2] == options.TermChar).Payload;
+        Assert.DoesNotContain(options.TermChar, firstPayload);
+        Assert.DoesNotContain(options.TermChar, secondPayload);
+
         var firstWire = new Crc(options).Append(firstPayload);
         var secondWire = new Crc(options).Append(secondPayload);
         var combined = firstWire.Concat(secondWire).ToArray();
@@ -112,11 +121,34 @@ public sealed class TermCharacterReceiveTests
         Assert.All(received, message => Assert.True(message.CrcValid));
     }
 
+    [Fact]
+    public void Realistic_multiline_payload_survives_every_fragment_boundary()
+    {
+        var options = TerminatedCrc();
+        // Representative of the documented Aeon controller reports: textual payload, embedded spaces
+        // and CR/LF, followed by binary CRC and ETX. CR/LF are payload; only ETX frames the message.
+        var payload = System.Text.Encoding.ASCII.GetBytes(" 23.4  24.1  25.0\r\nM  50.00 a  37.25\r\n 22.8  23.0\r\n");
+        Assert.DoesNotContain(options.TermChar, payload);
+        var wire = new Crc(options).Append(payload);
+
+        for (var split = 1; split < wire.Length; split++)
+        {
+            using var harness = new ProcessRxHarness(options);
+            harness.Feed(wire[..split]);
+            harness.Feed(wire[split..]);
+
+            var received = harness.WaitForMessages(1).Single();
+            Assert.True(received.CrcValid);
+            Assert.Equal(payload, received.PayloadBytes.ToArray());
+        }
+    }
+
     private static (byte[] Payload, byte[] Wire) FindCodeword(CrcOptions options, Func<byte[], bool> predicate)
     {
         for (var value = 0; value <= ushort.MaxValue; value++)
         {
             var payload = new byte[] { (byte)value, (byte)(value >> 8) };
+            if (payload.Contains(options.TermChar)) continue;
             var wire = new Crc(options).Append(payload);
             if (predicate(wire)) return (payload, wire);
         }
@@ -155,6 +187,8 @@ public sealed class TermCharacterReceiveTests
             worker.Start();
             WaitUntilWorkerIsWaiting();
         }
+
+        public uint CrcErrors => device.CRCErrors;
 
         public void Feed(ReadOnlySpan<byte> bytes)
         {
