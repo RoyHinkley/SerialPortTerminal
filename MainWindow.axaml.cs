@@ -15,6 +15,7 @@ namespace SerialPortTerminal;
 
 public sealed partial class MainWindow : Window
 {
+    private const string ApplicationTitle = "Serial Port Terminal";
     private readonly AppSettings settings = AppSettings.Load();
     private readonly TerminalConfiguration configuration = TerminalConfiguration.LoadLast();
     private readonly DiagnosticLog log = new();
@@ -167,6 +168,14 @@ public sealed partial class MainWindow : Window
     private void AppendReceived(string entry) => AppendText(ReceivedBox, entry, true); private void AppendDiagnostic(string entry) => AppendText(DiagnosticsBox, entry, false);
     private static void AppendText(TextBox box, string entry, bool separateEntry) { if (!Dispatcher.UIThread.CheckAccess()) { Dispatcher.UIThread.Post(() => AppendText(box, entry, separateEntry)); return; } var prefix = separateEntry && !string.IsNullOrEmpty(box.Text) ? Environment.NewLine : string.Empty; box.Text += prefix + entry; box.CaretIndex = box.Text?.Length ?? 0; }
     private void PostConnectionState(bool? connected = null) => Dispatcher.UIThread.Post(() => UpdateConnectionState(connected ?? session.Ready));
-    private void UpdateConnectionState(bool connected) { ConnectionStatus.Text = connected ? $"Connected: {session.SerialDevice?.PortSettings.PortName}" : "Disconnected"; ConnectButton.Content = connected ? "Disconnect" : "Connect"; SendButton.IsEnabled = connected; PortBox.IsEnabled = !connected; BaudBox.IsEnabled = !connected; ParityBox.IsEnabled = !connected; DataBitsBox.IsEnabled = !connected; StopBitsBox.IsEnabled = !connected; HandshakeBox.IsEnabled = !connected; RtsBox.IsEnabled = !connected; RefreshPortsButton.IsEnabled = !connected; }
+    private void UpdateConnectionState(bool connected)
+    {
+        var portName = session.SerialDevice?.PortSettings.PortName;
+        ConnectionStatus.Text = connected ? $"Connected: {portName}" : "Disconnected";
+        Title = connected && !string.IsNullOrWhiteSpace(portName) ? $"{portName} - {ApplicationTitle}" : ApplicationTitle;
+        ConnectButton.Content = connected ? "Disconnect" : "Connect";
+        SendButton.IsEnabled = connected;
+        PortBox.IsEnabled = !connected; BaudBox.IsEnabled = !connected; ParityBox.IsEnabled = !connected; DataBitsBox.IsEnabled = !connected; StopBitsBox.IsEnabled = !connected; HandshakeBox.IsEnabled = !connected; RtsBox.IsEnabled = !connected; RefreshPortsButton.IsEnabled = !connected;
+    }
     private void MainWindow_Closed(object? sender, EventArgs e) { configuration.PropertyChanged -= Configuration_PropertyChanged; configuration.Changed -= Configuration_Changed; try { configuration.SaveLast(); } catch { } log.EntryRecorded -= AppendDiagnostic; session.Dispose(); log.Dispose(); }
 }
