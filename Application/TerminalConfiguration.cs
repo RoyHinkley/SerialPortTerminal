@@ -118,6 +118,15 @@ public sealed class TerminalConfiguration : INotifyPropertyChanged
         options = new CrcOptions(initial, polynomial, residue, CrcPostInvert, CrcMsBitFirst, CrcMsByteFirst, term, OmitTermChar); return true;
     }
 
+    /// <summary>Builds one immutable protocol snapshot so transport code never observes a partially edited configuration.</summary>
+    public bool TryCreateProtocolSettings(out SerialProtocolSettings? settings, out string? error)
+    {
+        settings = null;
+        if (!TryCreateCrcOptions(out var crc, out error)) return false;
+        settings = SerialProtocolSettings.From(crc, SuppressCrcErrors);
+        return true;
+    }
+
     private static string ParityAbbreviation(Parity value) => value switch { Parity.None => "N", Parity.Odd => "O", Parity.Even => "E", Parity.Mark => "M", Parity.Space => "S", _ => value.ToString() };
     private static string StopBitsAbbreviation(StopBits value) => value switch { StopBits.One => "1", StopBits.OnePointFive => "1.5", StopBits.Two => "2", _ => value.ToString() };
     private static bool TryHex16(string text, string name, out ushort value, out string? error) { if (ushort.TryParse(NormalizeHex(text), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out value)) { error = null; return true; } error = $"Invalid {name}: '{text}'. Enter 1-4 hexadecimal digits."; return false; }
