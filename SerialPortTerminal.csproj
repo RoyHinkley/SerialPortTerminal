@@ -8,6 +8,15 @@
     <ApplicationIcon>Serial Port Terminal.ico</ApplicationIcon>
   </PropertyGroup>
 
+  <!-- The SDK's default source glob is recursive. The test project lives below the
+       application directory, so exclude its sources and generated obj files from
+       the application compilation. -->
+  <ItemGroup>
+    <Compile Remove="SerialPortTerminal.Tests\**\*.cs" />
+    <EmbeddedResource Remove="SerialPortTerminal.Tests\**\*" />
+    <None Remove="SerialPortTerminal.Tests\**\*" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="12.1.3" />
     <PackageReference Include="Avalonia.Desktop" Version="12.1.3" />
