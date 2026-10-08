@@ -4,12 +4,13 @@ namespace SerialPortTerminal.Tests;
 
 public sealed class CrcTests
 {
-    private static CrcOptions EurothermLike() => new()
+    /// <summary>CRC parameters used during the first Eurotherm field test.</summary>
+    private static CrcOptions EurothermFieldConfiguration() => new()
     {
-        Polynomial = 0xDAAE,
+        Polynomial = 0xA001,
         InitialValue = 0xFFFF,
-        ExpectedResidue = 0x82C0,
-        PostInvert = true,
+        ExpectedResidue = 0x0000,
+        PostInvert = false,
         MsBitFirst = false,
         MsByteFirst = false,
         OmitTermChar = true
@@ -18,7 +19,7 @@ public sealed class CrcTests
     [Fact]
     public void Append_known_field_command_produces_expected_codeword()
     {
-        var crc = new Crc(EurothermLike());
+        var crc = new Crc(EurothermFieldConfiguration());
         var payload = new byte[] { 0x02, 0x03, 0x00, 0x01, 0x00, 0x02 };
 
         var codeword = crc.Append(payload);
@@ -29,7 +30,7 @@ public sealed class CrcTests
     [Fact]
     public void Append_is_stateless_between_messages()
     {
-        var crc = new Crc(EurothermLike());
+        var crc = new Crc(EurothermFieldConfiguration());
         var payload = new byte[] { 0x02, 0x03, 0x00, 0x01, 0x00, 0x02 };
 
         var first = crc.Append(payload);
@@ -41,7 +42,7 @@ public sealed class CrcTests
     [Fact]
     public void Incremental_update_matches_whole_buffer_update_for_every_split()
     {
-        var options = EurothermLike();
+        var options = EurothermFieldConfiguration();
         var bytes = new byte[] { 0x02, 0x03, 0x00, 0x01, 0x00, 0x02, 0x95, 0xF8 };
         var whole = new Crc(options);
         whole.Init();
