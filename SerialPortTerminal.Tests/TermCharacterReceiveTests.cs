@@ -143,6 +143,34 @@ public sealed class TermCharacterReceiveTests
         }
     }
 
+    [Fact]
+    public void Staged_protocol_change_finishes_current_message_with_old_settings_and_applies_to_next()
+    {
+        var oldOptions = TerminatedCrc();
+        var newOptions = TerminatedCrc();
+        newOptions.Polynomial = 0x1021;
+        var oldPayload = new byte[] { 0x41, 0x42, 0x43, 0x44 };
+        var newPayload = new byte[] { 0x51, 0x52, 0x53, 0x54 };
+        var oldWire = new Crc(oldOptions).Append(oldPayload);
+        var newWire = new Crc(newOptions).Append(newPayload);
+
+        using var harness = new ProcessRxHarness(oldOptions);
+        harness.Feed(oldWire[..2]);
+        Assert.True(harness.StageProtocolSettings(SerialProtocolSettings.From(newOptions, suppressCrcErrors: false)));
+        harness.Feed(oldWire[2..]);
+
+        var first = harness.WaitForMessages(1).Single();
+        Assert.True(first.CrcValid);
+        Assert.Equal(oldPayload, first.PayloadBytes.ToArray());
+        Assert.Equal(oldOptions.Polynomial, harness.ProtocolSettings.Polynomial);
+
+        harness.Feed(newWire);
+        var received = harness.WaitForMessages(2);
+        Assert.True(received[1].CrcValid);
+        Assert.Equal(newPayload, received[1].PayloadBytes.ToArray());
+        Assert.Equal(newOptions.Polynomial, harness.ProtocolSettings.Polynomial);
+    }
+
     private static (byte[] Payload, byte[] Wire) FindCodeword(CrcOptions options, Func<byte[], bool> predicate)
     {
         for (var value = 0; value <= ushort.MaxValue; value++)
@@ -191,6 +219,8 @@ public sealed class TermCharacterReceiveTests
         }
 
         public uint CrcErrors => device.CRCErrors;
+        public SerialProtocolSettings ProtocolSettings => device.ProtocolSettings;
+        public bool StageProtocolSettings(SerialProtocolSettings settings) => device.StageProtocolSettings(settings);
 
         public void Feed(ReadOnlySpan<byte> bytes)
         {
