@@ -212,14 +212,26 @@ public sealed class SerialDevice : IDisposable
             while (processSignal.WaitOne() && active)
             {
                 var tail = rxbWrite; if (ErrorBufferOverflow) { ClearRxb(); continue; } var wire = RxbBytes(tail); rxbHead = tail; if (wire.Length == 0) continue;
-                if (rxCrc is null) { var data = new ReceivedData(wire, wire, null); Trace($"ProcessRxBySilence message: {SerialDataFormatter.ToEscapedText(data.PayloadBytes.Span)}"); DispatchData(data); ResponseCount++; continue; }
-                rxCrc.Init(); ErrorCrc = false; RxCrcCode = rxCrc.Update(wire);
-                if (rxCrc.Good()) { var data = CreateReceivedData(wire, true); Trace($"ProcessRxBySilence message: {SerialDataFormatter.ToEscapedText(data.PayloadBytes.Span)}"); DispatchData(data); ResponseCount++; }
-                else { HandleCrcError(); var data = CreateReceivedData(wire, false); Error($"ProcessRxBySilence: {SerialDataFormatter.ToEscapedText(wire)} [CRC Error]"); if (IgnoreCRCErrors) { DispatchData(data); ResponseCount++; } }
+                var data = DecodeSilenceFramedMessage(wire);
+                if (data.CrcValid == true) { Trace($"ProcessRxBySilence message: {SerialDataFormatter.ToEscapedText(data.PayloadBytes.Span)}"); DispatchData(data); ResponseCount++; }
+                else if (data.CrcValid == false) { HandleCrcError(); Error($"ProcessRxBySilence: {SerialDataFormatter.ToEscapedText(wire)} [CRC Error]"); if (IgnoreCRCErrors) { DispatchData(data); ResponseCount++; } }
+                else { Trace($"ProcessRxBySilence message: {SerialDataFormatter.ToEscapedText(data.PayloadBytes.Span)}"); DispatchData(data); ResponseCount++; }
             }
         }
         catch (Exception e) { Error($"fatal ProcessRxBySilence exception: {e}"); }
         finally { Trace("ending ProcessRxBySilence thread."); }
+    }
+
+    /// <summary>Decodes one message whose boundary has already been established by receive silence.</summary>
+    /// <remarks>This is also the characterization-test seam. It deliberately contains the same CRC path used by the live receive worker and performs no serial-port I/O.</remarks>
+    internal ReceivedData DecodeSilenceFramedMessage(ReadOnlySpan<byte> wireBytes)
+    {
+        var wire = wireBytes.ToArray();
+        if (CrcConfig is null) return new ReceivedData(wire, wire, null);
+
+        rxCrc ??= new Crc(CrcConfig);
+        rxCrc.Init(); ErrorCrc = false; RxCrcCode = rxCrc.Update(wire);
+        return CreateReceivedData(wire, rxCrc.Good());
     }
 
     /// <summary>Captures the CRC evidence while it is still in hand; presentation must not have to reconstruct it later.</summary>
