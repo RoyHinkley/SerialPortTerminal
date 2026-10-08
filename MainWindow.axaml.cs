@@ -4,6 +4,8 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Media;
+using Avalonia.Shapes;
 using Avalonia.Threading;
 using SerialPortTerminal.Application;
 using SerialPortTerminal.Diagnostics;
@@ -104,9 +106,17 @@ public sealed partial class MainWindow : Window
     private void SignalsChanged(SerialSignalState state) => Dispatcher.UIThread.Post(() => UpdateSignalDisplay(state));
     private void UpdateSignalDisplay(SerialSignalState? state)
     {
-        static string Show(string name, bool value) => $"{name} {(value ? "●" : "○")}";
-        if (state is not { } s) { RtsSignal.Text = "RTS —"; CtsSignal.Text = "CTS —"; DtrSignal.Text = "DTR —"; DsrSignal.Text = "DSR —"; DcdSignal.Text = "DCD —"; RiSignal.Text = "RI —"; return; }
-        RtsSignal.Text = Show("RTS", s.Rts); CtsSignal.Text = Show("CTS", s.Cts); DtrSignal.Text = Show("DTR", s.Dtr); DsrSignal.Text = Show("DSR", s.Dsr); DcdSignal.Text = Show("DCD", s.Dcd); RiSignal.Text = Show("RI", s.Ring);
+        var unknown = new SolidColorBrush(Color.Parse("#707070"));
+        var inactive = new SolidColorBrush(Color.Parse("#303030"));
+        var active = new SolidColorBrush(Color.Parse("#36B24A"));
+        static void SetLed(Ellipse led, bool value, IBrush activeBrush, IBrush inactiveBrush) => led.Fill = value ? activeBrush : inactiveBrush;
+        if (state is not { } s)
+        {
+            RtsSignal.Fill = CtsSignal.Fill = DtrSignal.Fill = DsrSignal.Fill = DcdSignal.Fill = RiSignal.Fill = unknown;
+            return;
+        }
+        SetLed(RtsSignal, s.Rts, active, inactive); SetLed(CtsSignal, s.Cts, active, inactive); SetLed(DtrSignal, s.Dtr, active, inactive);
+        SetLed(DsrSignal, s.Dsr, active, inactive); SetLed(DcdSignal, s.Dcd, active, inactive); SetLed(RiSignal, s.Ring, active, inactive);
     }
     private void Configuration_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
