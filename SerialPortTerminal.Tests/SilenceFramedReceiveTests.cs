@@ -77,4 +77,91 @@ public sealed class SilenceFramedReceiveTests
         Assert.True(received.CrcValid);
         Assert.Equal(payload, received.PayloadBytes.ToArray());
     }
+
+    [Fact]
+    public void Every_possible_transport_fragmentation_reassembles_to_same_message()
+    {
+        var options = FieldCrc();
+        var payload = new byte[] { 0x02, 0x03, 0x11, 0x22, 0x03, 0x44 };
+        var wire = new Crc(options).Append(payload);
+        using var device = new SerialDevice("TEST") { CrcConfig = options };
+
+        for (var split = 1; split < wire.Length; split++)
+        {
+            var fragments = VirtualInstrument.Fragment(wire, split);
+            var reassembled = fragments.SelectMany(fragment => fragment).ToArray();
+            var received = device.DecodeSilenceFramedMessage(reassembled);
+
+            Assert.True(received.CrcValid);
+            Assert.Equal(payload, received.PayloadBytes.ToArray());
+        }
+    }
+
+    [Fact]
+    public void Consecutive_virtual_instrument_responses_decode_independently()
+    {
+        var options = FieldCrc();
+        var command1 = new byte[] { 0x01 };
+        var command2 = new byte[] { 0x02 };
+        var payload1 = new byte[] { 0x10, 0x03, 0x20 };
+        var payload2 = new byte[] { 0x30, 0x40, 0x03, 0x50 };
+        var instrument = new VirtualInstrument()
+            .RespondTo(command1, new Crc(options).Append(payload1))
+            .RespondTo(command2, new Crc(options).Append(payload2));
+        using var device = new SerialDevice("TEST") { CrcConfig = options };
+
+        var first = device.DecodeSilenceFramedMessage(instrument.Respond(command1));
+        var second = device.DecodeSilenceFramedMessage(instrument.Respond(command2));
+
+        Assert.True(first.CrcValid);
+        Assert.True(second.CrcValid);
+        Assert.Equal(payload1, first.PayloadBytes.ToArray());
+        Assert.Equal(payload2, second.PayloadBytes.ToArray());
+    }
+
+    [Fact]
+    public void Crc_failure_does_not_poison_following_valid_message()
+    {
+        var options = FieldCrc();
+        var badPayload = new byte[] { 0x10, 0x20 };
+        var goodPayload = new byte[] { 0x30, 0x03, 0x40 };
+        var badWire = new Crc(options).Append(badPayload);
+        badWire[^1] ^= 0x80;
+        var goodWire = new Crc(options).Append(goodPayload);
+        using var device = new SerialDevice("TEST") { CrcConfig = options };
+
+        var bad = device.DecodeSilenceFramedMessage(badWire);
+        var good = device.DecodeSilenceFramedMessage(goodWire);
+
+        Assert.False(bad.CrcValid);
+        Assert.True(good.CrcValid);
+        Assert.Equal(goodPayload, good.PayloadBytes.ToArray());
+    }
+
+    [Fact]
+    public void Crc_byte_equal_to_03_has_no_framing_significance_in_silence_mode()
+    {
+        var options = FieldCrc();
+        var payload = FindPayloadWhoseCrcContains(0x03, options);
+        var wire = new Crc(options).Append(payload);
+        using var device = new SerialDevice("TEST") { CrcConfig = options };
+
+        var received = device.DecodeSilenceFramedMessage(wire);
+
+        Assert.Contains((byte)0x03, received.CrcBytes.ToArray());
+        Assert.True(received.CrcValid);
+        Assert.Equal(payload, received.PayloadBytes.ToArray());
+    }
+
+    private static byte[] FindPayloadWhoseCrcContains(byte value, CrcOptions options)
+    {
+        for (var i = 0; i <= ushort.MaxValue; i++)
+        {
+            var payload = new byte[] { (byte)i, (byte)(i >> 8) };
+            var wire = new Crc(options).Append(payload);
+            if (wire[^2] == value || wire[^1] == value) return payload;
+        }
+
+        throw new InvalidOperationException($"Unable to synthesize a CRC containing {value:X2}.");
+    }
 }
