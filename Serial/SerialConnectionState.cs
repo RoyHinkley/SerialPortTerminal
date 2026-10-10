@@ -1,9 +1,11 @@
 namespace SerialPortTerminal.Serial;
 
-/// <summary>Describes the lifecycle state of the physical serial transport.</summary>
+/// <summary>Describes the availability of a requested serial transport.</summary>
 /// <remarks>
-/// This is intentionally separate from connection intent and communications health. A requested
-/// connection may remain requested while the transport is unavailable and being recovered.
+/// Connection intent, transport availability, and communications health are deliberately separate concepts.
+/// In particular, <see cref="Unavailable"/> does not mean that the user has disconnected: the requested
+/// connection may remain active while the device owns no OS serial-port handle and periodically attempts
+/// to reacquire the configured endpoint.
 /// </remarks>
 public enum SerialConnectionState
 {
@@ -12,6 +14,5 @@ public enum SerialConnectionState
     Connected,
     Disconnecting,
     Unavailable,
-    Recovering,
     Disposed
 }
